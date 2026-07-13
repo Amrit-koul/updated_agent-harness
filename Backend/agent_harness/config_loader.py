@@ -3,6 +3,7 @@ from pathlib import Path
 import yaml
 
 from .contracts import AgentContract
+from .exceptions import ContractValidationError
 
 
 def load_yaml(path: str | Path):
@@ -16,7 +17,10 @@ def load_agent_contracts(config_dir: str | Path):
     for path in sorted(directory.glob("*.yaml")):
         raw = load_yaml(path)
         raw.setdefault("metadata", {})["source_file"] = str(path)
-        contracts.append(AgentContract.from_dict(raw))
+        try:
+            contracts.append(AgentContract.from_dict(raw))
+        except (TypeError, ValueError) as exc:
+            raise ContractValidationError(f"Invalid contract YAML '{path}': {exc}") from exc
     return contracts
 
 

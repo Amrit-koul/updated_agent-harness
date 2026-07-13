@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from agent_harness.registry import AgentRegistry
 from agent_harness.store import ControlPlaneStore
 from agent_harness.primitives import PrimitiveCatalog
+from agent_harness.authorization import AuthorizationRequest, AuthorizationService, PermissionDenied
 
 from banking_agents.policy.llm_risk_judge import LLMRiskJudge, LLMRiskJudgeRequest
 
@@ -63,13 +64,14 @@ class ToolAuthorizationResponse:
         return asdict(self)
 
 class ToolAuthorizationService:
-    def __init__(self, registry: AgentRegistry, store: ControlPlaneStore, primitives: PrimitiveCatalog, policies_config: dict, guardrails, llm_judge: LLMRiskJudge = None):
+    def __init__(self, registry: AgentRegistry, store: ControlPlaneStore, primitives: PrimitiveCatalog, policies_config: dict, guardrails, llm_judge: LLMRiskJudge = None, authorization: AuthorizationService = None):
         self.registry = registry
         self.store = store
         self.primitives = primitives
         self.policies = policies_config.get("policies", {})
         self.guardrails = guardrails
         self.llm_judge = llm_judge
+        self.authorization = authorization
 
     def authorize(self, request: ToolInvocationRequest) -> ToolAuthorizationResponse:
         trace_id = request.trace_id or str(uuid.uuid4())
@@ -90,6 +92,26 @@ class ToolAuthorizationService:
 
         contract = self.registry.get_contract(request.agent_id)
         lifecycle_status = contract.status.value
+
+        if self.authorization:
+            try:
+                self.authorization.enforce(AuthorizationRequest(
+                    agent_id=request.agent_id,
+                    principal_id=self.authorization.principal_id_for_agent(request.agent_id),
+                    invocation_id=trace_id,
+                    trace_id=trace_id,
+                    action=request.action if request.action == "invoke" else "invoke",
+                    resource_type=request.resource_type or "tool",
+                    resource_id=request.resource_id or request.tool_id,
+                    context={
+                        "data_scope": request.data_scope,
+                        "lifecycle_status": lifecycle_status,
+                        "human_override": request.human_override,
+                        "required_human_approval_for": contract.policy_permissions.get("requires_human_approval_for", []),
+                    },
+                ))
+            except PermissionDenied as exc:
+                return self._finalize(request, "BLOCK", exc.decision.reason_code, "rbac_denied", "HIGH", lifecycle_status, False, False, [], [exc.decision.reason_code], trace_id)
 
         # 2. Agent quarantined/disabled -> BLOCK
         if lifecycle_status in {"quarantined", "disabled"}:

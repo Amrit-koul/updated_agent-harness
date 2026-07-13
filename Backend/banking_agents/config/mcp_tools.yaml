@@ -1,0 +1,10 @@
+mcp_tools:
+  banking_mcp.get_policy_metadata:
+    server_id: banking_mcp
+    tool_name: get_policy_metadata
+  banking_mcp.calculate_repayment_plan:
+    server_id: banking_mcp
+    tool_name: calculate_repayment_plan
+  banking_mcp.get_customer_summary:
+    server_id: banking_mcp
+    tool_name: get_customer_summary

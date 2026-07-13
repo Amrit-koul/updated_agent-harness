@@ -3,9 +3,10 @@ name: Collections Workflow Agent
 owner: Collections Operations / Risk
 business_function: Collections Operations
 agent_type: external_plugin
-plugin_source: github_wrapped_workflow
+risk_tier: high
+contract_version: 1.0.0
+runtime_type: workflow
 execution_mode: workflow
-internal_orchestration: langgraph
 adapter_type: python_function
 entrypoint: banking_agents.external_plugins.collections_working_demo.wrapper.invoke
 description: >
@@ -62,54 +63,67 @@ memory_schema:
     account_history: {type: array}
     prior_recommendations: {type: array}
     ptp_history: {type: array}
+memory_contracts: [run, agent, customer]
 skills:
-  - collections_pre_call_intelligence
-  - voice_or_transcript_intelligence
-  - conversation_intelligence
+  - persona_scoring
+  - account_enrichment
+  - transcript_analysis
   - ptp_extraction
-  - claim_detection
-  - objection_detection
-  - sentiment_stress_analysis
-  - trust_governance
-  - persona_update
+  - claims_review
+  - trust_gating
   - next_best_action
   - post_call_review
-  - voice_pipeline_backend
 tools:
-  - collections_context_loader
-  - transcript_analyzer
-  - ptp_validator
-  - claim_manager
-  - trust_audit_logger
-  - review_case_manager
+  - collections_account_store
+  - collections_rules
+  - transcript_ingestion
 prompts:
   - nba_reasoning:v1
   - persona_explanation:v1
   - trust_gate_explanation:v1
   - banking_guardrails:v1
   - pii_redaction:v1
-  - conversation_intelligence:v1
+  - collections_conversation_intelligence:v1
+evaluators:
+  - collections_trust_gate_review
+hooks:
+  - invoke_lifecycle
+  - invoke_completed
+  - pre_tool
+  - post_tool
+  - policy_blocked
+  - cost_recorded
+  - on_trace_emit
 model_preferences:
-  mode: llm_extraction_with_deterministic_rules
-  llm_provider: groq
-  llm_model: llama-3.1-8b-instant
+  provider: groq
+  deployment: llama-3.1-8b-instant
+  allowed_fallbacks: []
+  supports_tools: false
+  supports_structured_output: true
   scoring_method: evidence_based_deterministic
   post_call_extraction: llm_with_keyword_fallback
   voice_stt: groq_whisper_large_v3_turbo
   voice_tts: groq_orpheus_v1_english
 policy_permissions:
   allowed_tools:
-    - collections_context_loader
-    - transcript_analyzer
-    - ptp_validator
-    - claim_manager
-    - trust_audit_logger
-    - review_case_manager
+    - collections_account_store
+    - collections_rules
+    - transcript_ingestion
     - invoke
   allowed_actions: [invoke, analyze, persist, review]
   allowed_data_scopes: [collections_accounts, call_history, review_cases]
+  denied_actions: [approve_waiver, offer_settlement]
   requires_human_approval_for: [settlement, waiver, trigger_legal, persona_shift_distressed]
+  mcp_servers: [banking_mcp]
+  mcp_tools: [banking_mcp.get_customer_summary]
   max_auto_waiver_pct: 0
+budget_policy:
+  period: invocation
+  max_input_tokens: 12000
+  max_output_tokens: 3000
+  max_total_tokens: 15000
+  warning_threshold_pct: 80
+  enforcement_mode: warn
 guardrails:
   - customer_data_access
   - pii_leakage
@@ -125,6 +139,8 @@ observability_hooks:
   usage_cost: true
   audit: true
 metadata:
+  x_plugin_source: github_wrapped_workflow
+  x_internal_orchestration: langgraph
   timeout_seconds: 60
   voice_pipeline_status: backend_migrated_frontend_pending
   safe_demo_claims:

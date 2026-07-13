@@ -21,12 +21,28 @@ function ContractDrawer({ agentId, onClose }) {
       controlPlaneApi.listPolicyDecisions().catch(() => ({ decisions: [] })),
       controlPlaneApi.listGuardrailEvents().catch(() => ({ events: [] })),
     ]);
+    const security = await controlPlaneApi.listPrincipals()
+      .then(async (payload) => {
+        const principal = asArray(payload, 'principals').find((item) => item.agent_id === agentId);
+        if (!principal) return { principal: null, effective: null, decisions: [] };
+        const [effective, decisions] = await Promise.all([
+          controlPlaneApi.getEffectivePermissions(principal.principal_id).catch(() => null),
+          controlPlaneApi.listAuthorizationDecisions().catch(() => ({ decisions: [] })),
+        ]);
+        return {
+          principal,
+          effective,
+          decisions: asArray(decisions, 'decisions').filter((item) => item.principal_id === principal.principal_id).slice(0, 10),
+        };
+      })
+      .catch((error) => ({ unavailable: true, message: error.message }));
     return { 
       contract, 
       health, 
       toolAuth: asArray(toolAuth, 'events').filter(e => e.agent_id === agentId),
       policy: asArray(policy, 'decisions').filter(e => e.agent_id === agentId),
-      guardrails: asArray(guardrails, 'events').filter(e => e.agent_id === agentId)
+      guardrails: asArray(guardrails, 'events').filter(e => e.agent_id === agentId),
+      security,
     };
   }, [agentId]);
   
@@ -36,6 +52,7 @@ function ContractDrawer({ agentId, onClose }) {
   const policy = state.data?.policy || [];
   const guardrails = state.data?.guardrails || [];
   const primitives = contract?.primitives || {};
+  const security = state.data?.security || {};
   
   const latestAuth = toolAuth[0];
   const latestPolicy = policy[0];
@@ -109,6 +126,39 @@ function ContractDrawer({ agentId, onClose }) {
           </dl>
         </div>
 
+        <div className="cc-drawer-section"><h3>Security Principal</h3>
+          {security.unavailable ? (
+            <p className="cc-muted cc-small">{security.message}</p>
+          ) : security.principal ? (
+            <>
+              <dl className="cc-detail-grid">
+                <dt>Principal ID</dt><dd className="mono">{security.principal.principal_id}</dd>
+                <dt>Principal Type</dt><dd>{display(security.principal.principal_type)}</dd>
+                <dt>Status</dt><dd><StatusChip status={security.principal.status} /></dd>
+                <dt>Credential Reference</dt><dd>{display(security.principal.credential_reference) || 'Not configured'}</dd>
+              </dl>
+              <div className="cc-primitive-detail">
+                <strong>Assigned Roles</strong>
+                {security.effective?.roles?.length ? (
+                  <div className="cc-token-list">{security.effective.roles.map((role) => <span key={`${role.role_id}-${role.scope_type}-${role.scope_value}`}>{role.role_name} · {role.scope_type}:{role.scope_value}</span>)}</div>
+                ) : <p className="cc-muted cc-small">No valid roles returned.</p>}
+              </div>
+              <div className="cc-primitive-detail">
+                <strong>Effective Permissions</strong>
+                {security.effective?.permissions?.length ? (
+                  <div className="cc-token-list">{security.effective.permissions.map((permission) => <span key={`${permission.permission_id}-${permission.role_id}-${permission.scope_type}-${permission.scope_value}`}>{permission.permission_id}</span>)}</div>
+                ) : <p className="cc-muted cc-small">No effective permissions returned.</p>}
+              </div>
+              <div className="cc-primitive-detail">
+                <strong>Recent Authorization Decisions</strong>
+                {security.decisions?.length ? (
+                  <div className="cc-table-scroll"><table className="cc-table"><thead><tr><th>Decision</th><th>Resource</th><th>Action</th><th>Reason</th></tr></thead><tbody>{security.decisions.map((item) => <tr key={item.decision_id}><td><DecisionChip decision={item.decision} /></td><td className="mono">{item.resource_type}:{item.resource_id}</td><td>{item.requested_action}</td><td>{item.reason_code}</td></tr>)}</tbody></table></div>
+                ) : <p className="cc-muted cc-small">No authorization decisions returned.</p>}
+              </div>
+            </>
+          ) : <p className="cc-muted cc-small">No principal returned for this agent.</p>}
+        </div>
+
         {arraySections.map((key) => contract[key]?.length ? <div className="cc-drawer-section" key={key}><h3>{key.replaceAll('_', ' ')}</h3><div className="cc-token-list">{contract[key].map((item) => <span key={String(item)}>{String(item)}</span>)}</div></div> : null)}
         {objectSections.map((key) => contract[key] != null ? <div className="cc-drawer-section" key={key}><h3>{key.replaceAll('_', ' ')}</h3><JsonBlock value={contract[key]} /></div> : null)}
         
@@ -129,7 +179,7 @@ function normalizeContract(payload) {
   }
 
   const identity = c.identity || {};
-  const adapter = c.adapter || {};
+  const runtime = c.runtime || c.adapter || {};
   const schemas = c.schemas || {};
   const capabilities = c.capabilities || {};
   const permissions = c.permissions || {};
@@ -138,18 +188,18 @@ function normalizeContract(payload) {
 
   return {
     agent_id: identity.agent_id || payload.agent_id,
-    name: identity.name,
+    name: identity.display_name || identity.name,
     description: identity.description,
-    version: identity.version,
+    version: identity.contract_version || identity.version,
     owner: identity.owner,
     business_function: identity.business_function,
     agent_type: identity.agent_type,
-    execution_mode: identity.execution_mode,
-    status: lifecycle.status,
-    default_status: lifecycle.default_status,
-    adapter_type: adapter.adapter_type,
-    entrypoint: adapter.entrypoint,
-    endpoint: adapter.endpoint,
+    execution_mode: runtime.execution_mode || identity.execution_mode,
+    status: lifecycle.status || lifecycle.initial_status,
+    default_status: lifecycle.default_status || lifecycle.initial_status,
+    adapter_type: runtime.adapter_type,
+    entrypoint: runtime.entrypoint,
+    endpoint: runtime.endpoint,
     input_schema: schemas.input_schema,
     output_schema: schemas.output_schema,
     state_schema: schemas.state_schema,
@@ -157,8 +207,8 @@ function normalizeContract(payload) {
     skills: capabilities.skills || [],
     tools: capabilities.tools || [],
     prompts: capabilities.prompts || [],
-    model_preferences: capabilities.model_preferences || {},
-    policy_permissions: permissions.policy_permissions || {},
+    model_preferences: c.model_policy || capabilities.model_preferences || {},
+    policy_permissions: permissions.policy_permissions || permissions || {},
     allowed_data_scopes: permissions.allowed_data_scopes || [],
     guardrails: c.guardrails || [],
     observability_hooks: observability.hooks || {},

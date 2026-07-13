@@ -3,6 +3,9 @@ name: Loan Assessment Agent
 owner: Retail Credit Risk
 business_function: Loan Eligibility
 agent_type: internal
+risk_tier: high
+contract_version: 1.0.0
+runtime_type: internal
 execution_mode: workflow
 adapter_type: python_function
 entrypoint: banking_agents.agents.control_plane_plugins.internal.loan_assessment
@@ -11,11 +14,15 @@ input_schema: {type: object, required: [profile], properties: {query: {type: str
 output_schema: {type: object, required: [eligibility_assessment], properties: {eligibility_assessment: {type: string}}}
 state_schema: {type: object, properties: {assessment_stage: {type: string}}}
 memory_schema: {type: object, properties: {prior_assessments: {type: array}}}
+memory_contracts: [run, agent]
 skills: [credit_policy_retrieval, eligibility_calculation]
 tools: [document_search, eligibility_checker]
 prompts: [eligibility_reasoning:v1, risk_explanation:v1, banking_guardrails:v1, pii_redaction:v1]
-model_preferences: {primary: llama-3.3-70b-versatile}
-policy_permissions: {allowed_tools: [document_search, eligibility_checker, invoke], allowed_actions: [invoke], allowed_data_scopes: [loan_policy, applicant_profile], requires_human_approval_for: [final_approval]}
+evaluators: [rag_groundedness, rag_semantic_similarity, citation_coverage]
+hooks: [invoke_lifecycle, invoke_completed, policy_blocked, on_trace_emit]
+model_preferences: {provider: groq, deployment: llama-3.3-70b-versatile, supports_tools: false, supports_structured_output: true}
+policy_permissions: {allowed_tools: [document_search, eligibility_checker, invoke], allowed_actions: [invoke], allowed_data_scopes: [loan_policy, applicant_profile], denied_actions: [], requires_human_approval_for: [final_approval], mcp_servers: [banking_mcp], mcp_tools: [banking_mcp.calculate_repayment_plan]}
+budget_policy: {period: invocation, max_input_tokens: 8000, max_output_tokens: 2000, max_total_tokens: 10000, warning_threshold_pct: 80, enforcement_mode: warn, fallback_action: human_review, allowed_fallback_deployments: []}
 guardrails: [prompt_injection, pii_leakage, regulatory_advice, business_scope]
-observability_hooks: {execution_trace: true, agent_run: true, policy_decision: true}
+observability_hooks: {execution_trace: true, agent_run: true, policy_decision: true, trace_enabled: true, audit_enabled: true, usage_enabled: true, step_events_enabled: false, heartbeat_required: false, external_event_ingestion_enabled: false, event_schema_version: "1.0"}
 status: active

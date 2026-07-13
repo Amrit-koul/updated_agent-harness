@@ -3,6 +3,9 @@ name: Sample External Agent
 owner: Integration Engineering
 business_function: External Integration
 agent_type: external
+risk_tier: medium
+contract_version: 1.0.0
+runtime_type: external
 execution_mode: decoupled
 adapter_type: rest_api
 endpoint: http://127.0.0.1:9001/invoke
@@ -11,11 +14,14 @@ input_schema: {type: object, required: [event], properties: {event: {type: objec
 output_schema: {type: object, properties: {status: {type: string}}}
 state_schema: {type: object, properties: {external_run_id: {type: string}}}
 memory_schema: {type: object, properties: {correlation: {type: object}}}
+memory_contracts: [run]
 skills: [external_event_processing]
 tools: [external_rest_endpoint]
 prompts: []
+evaluators: []
+hooks: [invoke_lifecycle, invoke_completed]
 model_preferences: {}
-policy_permissions: {allowed_tools: [external_rest_endpoint, invoke], allowed_actions: [invoke], allowed_data_scopes: [external_events], requires_human_approval_for: [sensitive_action]}
+policy_permissions: {allowed_tools: [external_rest_endpoint, invoke], allowed_actions: [invoke], allowed_data_scopes: [external_events], denied_actions: [], requires_human_approval_for: [sensitive_action], mcp_servers: [], mcp_tools: []}
 guardrails: [prompt_injection, pii_leakage, business_scope]
-observability_hooks: {heartbeat: true, event_ingestion: true, policy_decision: true}
+observability_hooks: {heartbeat: true, event_ingestion: true, policy_decision: true, trace_enabled: false, audit_enabled: true, usage_enabled: true, heartbeat_required: true, external_event_ingestion_enabled: true, event_schema_version: "1.0"}
 status: active

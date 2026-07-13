@@ -1,0 +1,16 @@
+mcp_servers:
+  banking_mcp:
+    name: Banking MCP Server
+    transport: stdio
+    command_reference:
+      command: "{python}"
+      args: ["-m", "banking_agents.mcp_demo.server"]
+      cwd: "{backend_root}"
+    environment_reference: MCP_BANKING_
+    status: registered
+    owner: Agent Platform Governance
+    risk_tier: high
+    auth_type: none
+    credential_reference:
+    connect_timeout_seconds: 10
+    call_timeout_seconds: 15

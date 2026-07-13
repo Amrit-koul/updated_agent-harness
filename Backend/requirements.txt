@@ -11,3 +11,4 @@ langgraph
 langsmith
 sqlalchemy
 httpx
+mcp>=1.2.0

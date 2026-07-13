@@ -1,8 +1,9 @@
 """Business-friendly Agent Control Plane API. Existing APIs remain untouched."""
 from datetime import datetime, timezone
 import uuid
+import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from agent_harness.exceptions import (
     AdapterConfigurationError,
     AdapterConnectionError,
@@ -11,6 +12,9 @@ from agent_harness.exceptions import (
     AdapterTimeoutError,
     AgentNotFoundError,
 )
+from agent_harness.invocation import InvocationRequest
+from agent_harness.mcp_governance import MCPGovernanceError, MCPInvocationRequest
+from agent_harness.authorization import AuthorizationRequest
 from agent_harness.redaction import contract_summary, safe_summary
 from agent_harness.tracing import get_tracer
 
@@ -26,17 +30,46 @@ router = APIRouter(prefix="/api/v1/control", tags=["Agent Control Plane"])
 def _limit(value, maximum=500): return max(1, min(value, maximum))
 
 
+def require_admin(x_control_plane_admin_secret: str | None = Header(default=None)):
+    """Control-plane admin guard.
+
+    Set CONTROL_PLANE_ADMIN_SECRET on the backend and send the same value in
+    X-Control-Plane-Admin-Secret. Production hardening should replace this with
+    enterprise identity, SSO, service auth and audit-grade administrator claims.
+    """
+    expected = os.getenv("CONTROL_PLANE_ADMIN_SECRET")
+    if not expected:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Admin API disabled: CONTROL_PLANE_ADMIN_SECRET is not configured")
+    if not x_control_plane_admin_secret or x_control_plane_admin_secret != expected:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin authorization failed")
+    return {"admin": "control-plane-admin"}
+
+
 def _trace_metadata(agent_id, trace_id, request_source):
     contract = control_plane.registry.get_contract(agent_id)
     return {
         **contract_summary(contract), "trace_id": trace_id, "status_before": contract.status.value,
         "status_after": contract.status.value, "request_source": request_source,
-        "environment": "local_demo", "client": "Bandhan Bank",
+        "environment": os.getenv("APP_ENV", "local"), "client": "Bandhan Bank",
     }
 
 
 def _agent_with_primitives(agent_id: str):
-    contract = control_plane.registry.get_contract(agent_id).to_dict()
+    contract_obj = control_plane.registry.get_contract(agent_id)
+    contract = contract_obj.to_dict()
+    registry_view = control_plane.registry.registry_contract_view(agent_id)
+    contract.update({
+        "effective_resolved_contract": registry_view["effective_resolved_contract"],
+        "original_contract_version": registry_view["original_contract_version"],
+        "validation_result": registry_view["validation_result"],
+        "unresolved_references": registry_view["unresolved_references"],
+        "active_runtime": registry_view["active_runtime"],
+        "model_deployment": registry_view["model_deployment"],
+        "budget_policy": registry_view["budget_policy"],
+        "permissions": registry_view["permissions"],
+        "observability_requirements": registry_view["observability_requirements"],
+        "latest_evidence": registry_view["latest_evidence"],
+    })
     contract["primitives"] = control_plane.primitives.agent_primitives(agent_id)
     contract["metrics"] = control_plane.registry.metrics(agent_id)
     latest = control_plane.store.query("SELECT * FROM kill_switch_events WHERE agent_id=? ORDER BY id DESC LIMIT 1", (agent_id,))
@@ -127,7 +160,7 @@ async def agent_contract(agent_id: str):
     """Return the Agent Contract for a registered agent.
 
     This is a read-only view of the manifest-backed contract used by the harness
-    to govern agent execution.  It contains only contract/manifest fields — no
+    to govern agent execution.  It contains only contract/manifest fields - no
     runtime metrics, no event history, no enriched primitives.  The caller should
     use GET /agents/{agent_id} for the full runtime-enriched agent detail.
     """
@@ -136,60 +169,7 @@ async def agent_contract(agent_id: str):
     except (AgentNotFoundError, KeyError) as exc:
         raise HTTPException(404, str(exc))
 
-    raw = contract.to_dict()
-    meta = raw.get("metadata", {})
-    is_demo = bool(meta.get("demo", False))
-
-    return {
-        "agent_id": raw["agent_id"],
-        "contract": {
-            "identity": {
-                "agent_id":          raw.get("agent_id"),
-                "name":              raw.get("name"),
-                "description":       raw.get("description") or None,
-                "version":           raw.get("version") or "1.0.0",
-                "owner":             raw.get("owner"),
-                "business_function": raw.get("business_function"),
-                "agent_type":        raw.get("agent_type"),
-                "execution_mode":    raw.get("execution_mode"),
-            },
-            "adapter": {
-                "adapter_type": raw.get("adapter_type"),
-                "entrypoint":   raw.get("entrypoint") or None,
-                "endpoint":     raw.get("endpoint") or None,
-            },
-            "schemas": {
-                "input_schema":  raw.get("input_schema") or {},
-                "output_schema": raw.get("output_schema") or {},
-                "state_schema":  raw.get("state_schema") or {},
-                "memory_schema": raw.get("memory_schema") or {},
-            },
-            "capabilities": {
-                "skills":            raw.get("skills") or [],
-                "tools":             raw.get("tools") or [],
-                "prompts":           raw.get("prompts") or [],
-                "model_preferences": raw.get("model_preferences") or {},
-            },
-            "permissions": {
-                "policy_permissions":  raw.get("policy_permissions") or {},
-                "allowed_data_scopes": (raw.get("policy_permissions") or {}).get("allowed_data_scopes") or [],
-            },
-            "guardrails": raw.get("guardrails") or [],
-            "observability": {
-                "hooks": raw.get("observability_hooks") or {},
-            },
-            "lifecycle": {
-                "status":         raw.get("status"),
-                "default_status": (meta.get("default_status") or raw.get("status")),
-            },
-            "metadata": {
-                k: v for k, v in meta.items()
-                if k not in {"source_file", "safe_demo_claims", "avoid_claiming"}
-            },
-        },
-        "source_file": meta.get("source_file") or None,
-        "_demo": is_demo,
-    }
+    return control_plane.registry.registry_contract_view(agent_id)
 
 
 @router.get("/agents/{agent_id}/status")
@@ -205,18 +185,31 @@ async def agent_health(agent_id: str):
 
 @router.post("/agents/{agent_id}/invoke")
 async def invoke_agent(agent_id: str, body: dict):
-    return await _invoke_control_plane(agent_id, body)
+    return await _invoke_control_plane(agent_id, body, typed=True)
 
 
-async def _invoke_control_plane(agent_id: str, body: dict, *, trace_name=None, request_source="generic_invoke"):
-    try: return await control_plane.invoke(agent_id, body, trace_name=trace_name, request_source=request_source)
-    except AgentNotFoundError as exc: raise HTTPException(404, str(exc))
-    except ValueError as exc: raise HTTPException(422, str(exc))
-    except PermissionError as exc: raise HTTPException(403, str(exc))
-    except AdapterTimeoutError as exc: raise HTTPException(504, str(exc))
-    except AdapterConfigurationError as exc: raise HTTPException(503, str(exc))
-    except (AdapterConnectionError, AdapterResponseError) as exc: raise HTTPException(502, str(exc))
-    except AdapterError as exc: raise HTTPException(500, str(exc))
+async def _invoke_control_plane(agent_id: str, body: dict, *, trace_name=None, request_source="generic_invoke", typed=False):
+    payload = body or {}
+    request = InvocationRequest(
+        agent_id=agent_id,
+        action=payload.get("action", "invoke"),
+        payload=payload,
+        invoking_user_id=payload.get("invoking_user_id"),
+        invoking_agent_id=payload.get("invoking_agent_id"),
+        correlation_id=payload.get("trace_id") or payload.get("correlation_id"),
+        session_id=payload.get("session_id") or payload.get("user_id"),
+        requested_tools=payload.get("requested_tools"),
+        metadata={"trace_name": trace_name, "request_source": request_source},
+    )
+    result = await control_plane.invoke_result(request)
+    response = result.model_dump()
+    if result.status == "completed":
+        response["result"] = result.output
+    else:
+        response["decision"] = "BLOCK" if result.status == "blocked" else "ERROR"
+        response["reason"] = (result.error or {}).get("message")
+        response["adapter_invoked"] = False
+    return response if typed else ({**response, "result": result.output} if result.status == "completed" else response)
 
 
 @router.post("/agents/{agent_id}/heartbeat")
@@ -246,6 +239,28 @@ async def usage_summary():
 @router.get("/usage/events")
 async def usage_events(limit: int = 100, agent_id: str | None = None, model: str | None = None):
     return {"events": control_plane.services.usage_meter.get_events(limit=_limit(limit), agent_id=agent_id, model=model)}
+
+
+@router.get("/usage/budgets")
+async def usage_budgets():
+    status = control_plane.services.budget_manager.get_budget_status()
+    existing = {item["agent_id"] for item in status.get("definitions", [])}
+    for item in control_plane.registry.list_agents():
+        contract = control_plane.registry.get_contract(item["agent_id"])
+        policy = contract.budget_policy or {}
+        if policy and contract.agent_id not in existing:
+            effective = contract.effective_contract()["model_policy"]
+            status["definitions"].append({
+                "definition_id": f"{contract.agent_id}:{policy.get('period', 'invocation')}",
+                "agent_id": contract.agent_id,
+                "provider": effective.get("provider"),
+                "model": effective.get("deployment"),
+                "currency": "USD",
+                "active": True,
+                "policy": policy,
+                "configured_only": True,
+            })
+    return status
 
 
 @router.get("/events")
@@ -280,7 +295,7 @@ async def ingest_event(body: dict):
     trace_id = body.get("trace_id") or str(uuid.uuid4())
     event_type = body.get("event_type", "EXTERNAL_EVENT")
     contract = control_plane.registry.get_contract(agent_id)
-    with get_tracer().trace(f"Agent Control Plane Event — {agent_id}", inputs=safe_summary(body), metadata=_trace_metadata(agent_id, trace_id, "external_event"), tags=["agent_harness", "control_plane", "banking", agent_id, contract.business_function, contract.adapter_type]) as root:
+    with get_tracer().trace(f"Agent Control Plane Event - {agent_id}", inputs=safe_summary(body), metadata=_trace_metadata(agent_id, trace_id, "external_event"), tags=["agent_harness", "control_plane", "banking", agent_id, contract.business_function, contract.adapter_type]) as root:
         with get_tracer().span("audit_persist", inputs={"event_type": event_type}) as span:
             control_plane.store.add_event(event_type, trace_id, agent_id, body.get("payload", {}))
             span.set_output({"stored": True})
@@ -334,6 +349,172 @@ async def authorize_tool(body: dict):
 @router.get("/tools/authorization-events")
 async def tool_authorization_events(limit: int = 100, agent_id: str | None = None, decision: str | None = None, source: str | None = None):
     return {"events": control_plane.store.list_tool_authorization_events(limit=_limit(limit), agent_id=agent_id, decision=decision, source=source)}
+
+
+def _mcp_error(exc: MCPGovernanceError):
+    status_code = {
+        "MCP_PERMISSION_DENIED": 403,
+        "MCP_DIRECT_BYPASS_PREVENTED": 403,
+        "MCP_AUTH_FAILURE": 401,
+        "MCP_SERVER_UNAVAILABLE": 503,
+        "MCP_TIMEOUT": 504,
+        "MCP_SCHEMA_MISMATCH": 422,
+        "MCP_TOOLSET_CHANGED": 409,
+        "MCP_UNSUPPORTED_TRANSPORT": 422,
+        "MCP_PAYLOAD_TOO_LARGE": 413,
+    }.get(exc.code, 500)
+    raise HTTPException(status_code, {"code": exc.code, "message": exc.message})
+
+
+@router.get("/mcp/servers")
+async def mcp_servers():
+    servers = control_plane.store.list_mcp_servers()
+    tools = control_plane.store.list_mcp_tools()
+    invocations = control_plane.store.list_mcp_invocations(limit=20)
+    server_ids = {server["server_id"] for server in servers}
+    if "banking_mcp" in server_ids:
+        servers = [server for server in servers if server["server_id"] != "demo_banking_mcp"]
+        tools = [tool for tool in tools if tool["server_id"] != "demo_banking_mcp"]
+        invocations = [item for item in invocations if item.get("server_id") != "demo_banking_mcp"]
+    by_server = {}
+    for tool in tools:
+        by_server.setdefault(tool["server_id"], []).append(tool)
+    allowed_agents = {}
+    for item in control_plane.registry.list_agents():
+        contract = control_plane.registry.get_contract(item["agent_id"])
+        for ref in (contract.policy_permissions or {}).get("mcp_tools") or []:
+            allowed_agents.setdefault(ref, []).append(contract.agent_id)
+    return {
+        "servers": [{**server, "tools": by_server.get(server["server_id"], [])} for server in servers],
+        "allowed_agents": allowed_agents,
+        "recent_invocations": invocations,
+        "integration_types": {
+            "internal_tools": "In-process harness tools governed by tool authorization.",
+            "rest_integrations": "REST/webhook adapters governed as external agents.",
+            "mcp_tools": "Real MCP tools discovered through approved stdio or streamable HTTP transports.",
+        },
+    }
+
+
+@router.get("/mcp/servers/{server_id}")
+async def mcp_server(server_id: str):
+    server = control_plane.store.get_mcp_server(server_id)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    return {"server": server, "tools": control_plane.store.list_mcp_tools(server_id)}
+
+
+@router.post("/mcp/servers/{server_id}/refresh", dependencies=[Depends(require_admin)])
+async def refresh_mcp_server(server_id: str):
+    try:
+        return await control_plane.mcp.refresh_server(server_id)
+    except MCPGovernanceError as exc:
+        _mcp_error(exc)
+
+
+@router.get("/mcp/tools")
+async def mcp_tools(server_id: str | None = None):
+    return {"tools": control_plane.store.list_mcp_tools(server_id)}
+
+
+@router.get("/mcp/invocations")
+async def mcp_invocations(limit: int = 100, server_id: str | None = None, tool_name: str | None = None, decision: str | None = None):
+    return {"invocations": control_plane.store.list_mcp_invocations(limit=_limit(limit), server_id=server_id, tool_name=tool_name, decision=decision)}
+
+
+@router.post("/agents/{agent_id}/mcp/{server_id}/{tool_name}")
+async def invoke_mcp_tool(agent_id: str, server_id: str, tool_name: str, body: dict):
+    if any(key in (body or {}) for key in ("server_url", "endpoint", "transport", "command", "command_reference")):
+        raise HTTPException(400, {"code": "MCP_ARBITRARY_SERVER_REJECTED", "message": "MCP servers are administrator configured; request payloads cannot supply endpoints or commands"})
+    try:
+        return await control_plane.mcp.invoke_tool(MCPInvocationRequest(
+            agent_id=agent_id,
+            server_id=server_id,
+            tool_name=tool_name,
+            arguments=(body or {}).get("arguments") or {},
+            parent_agent_invocation_id=(body or {}).get("parent_agent_invocation_id"),
+            trace_id=(body or {}).get("trace_id") or str(uuid.uuid4()),
+            human_override=(body or {}).get("human_override") or {},
+        ))
+    except MCPGovernanceError as exc:
+        _mcp_error(exc)
+
+
+@router.get("/security/principals", dependencies=[Depends(require_admin)])
+async def list_principals():
+    return {"principals": control_plane.store.list_principals()}
+
+
+@router.get("/security/principals/{principal_id}", dependencies=[Depends(require_admin)])
+async def read_principal(principal_id: str):
+    principal = control_plane.store.get_principal(principal_id)
+    if not principal:
+        raise HTTPException(404, "Principal not found")
+    return principal
+
+
+@router.post("/security/principals", dependencies=[Depends(require_admin)])
+async def create_principal(body: dict):
+    agent_id = body.get("agent_id")
+    if not agent_id or not control_plane.registry.exists(agent_id):
+        raise HTTPException(422, "Registered agent_id is required")
+    principal_id = body.get("principal_id") or f"principal-{uuid.uuid4()}"
+    control_plane.store.execute(
+        "INSERT INTO agent_principals(principal_id,agent_id,principal_type,display_name,status,credential_reference) VALUES(?,?,?,?,?,?)",
+        (principal_id, agent_id, body.get("principal_type", "agent"), body.get("display_name") or agent_id, body.get("status", "active"), body.get("credential_reference")),
+    )
+    control_plane.authorization.invalidate(principal_id)
+    return control_plane.store.get_principal(principal_id)
+
+
+@router.post("/security/principals/{principal_id}/disable", dependencies=[Depends(require_admin)])
+async def disable_principal(principal_id: str, body: dict | None = None):
+    if not control_plane.store.get_principal(principal_id):
+        raise HTTPException(404, "Principal not found")
+    control_plane.store.execute("UPDATE agent_principals SET status='disabled',updated_at=CURRENT_TIMESTAMP WHERE principal_id=?", (principal_id,))
+    control_plane.authorization.invalidate(principal_id)
+    return {"principal_id": principal_id, "status": "disabled"}
+
+
+@router.get("/security/roles", dependencies=[Depends(require_admin)])
+async def list_roles():
+    return {"roles": control_plane.store.list_roles()}
+
+
+@router.post("/security/principals/{principal_id}/roles", dependencies=[Depends(require_admin)])
+async def assign_role(principal_id: str, body: dict):
+    role_id = body.get("role_id")
+    if not role_id:
+        raise HTTPException(422, "role_id is required")
+    if not control_plane.store.get_principal(principal_id):
+        raise HTTPException(404, "Principal not found")
+    if not control_plane.store.query("SELECT role_id FROM roles WHERE role_id=?", (role_id,)):
+        raise HTTPException(404, "Role not found")
+    control_plane.store.execute(
+        "INSERT OR REPLACE INTO principal_roles(principal_id,role_id,scope_type,scope_value,valid_from,valid_until,granted_by) VALUES(?,?,?,?,?,?,?)",
+        (principal_id, role_id, body.get("scope_type", "global"), body.get("scope_value", "*"), body.get("valid_from") or datetime.now(timezone.utc).isoformat(), body.get("valid_until"), body.get("granted_by", "local-demo-admin")),
+    )
+    control_plane.authorization.invalidate(principal_id)
+    return control_plane.authorization.effective_permissions(principal_id)
+
+
+@router.delete("/security/principals/{principal_id}/roles/{role_id}", dependencies=[Depends(require_admin)])
+async def revoke_role(principal_id: str, role_id: str, scope_type: str = "global", scope_value: str = "*"):
+    control_plane.store.execute("DELETE FROM principal_roles WHERE principal_id=? AND role_id=? AND scope_type=? AND scope_value=?", (principal_id, role_id, scope_type, scope_value))
+    control_plane.authorization.invalidate(principal_id)
+    return {"principal_id": principal_id, "role_id": role_id, "revoked": True}
+
+
+@router.get("/security/principals/{principal_id}/effective-permissions", dependencies=[Depends(require_admin)])
+async def effective_permissions(principal_id: str):
+    if not control_plane.store.get_principal(principal_id):
+        raise HTTPException(404, "Principal not found")
+    return control_plane.authorization.effective_permissions(principal_id)
+
+
+@router.get("/security/authorization-decisions", dependencies=[Depends(require_admin)])
+async def authorization_decisions(limit: int = 100, principal_id: str | None = None, decision: str | None = None):
+    return {"decisions": control_plane.store.list_authorization_decisions(limit=_limit(limit), principal_id=principal_id, decision=decision)}
 
 
 @router.get("/guardrails")
@@ -485,7 +666,20 @@ async def kill_switch(agent_id: str, body: dict):
         if not reason: raise HTTPException(400, "reason is required for manual lifecycle transitions")
         source = body.get("source", "manual_admin")
         approved_by = body.get("approved_by")
-        result = control_plane.kill_switch.change_status(agent_id, status, source, reason, body.get("triggered_by", "admin"), trace_id=body.get("trace_id"), severity=body.get("severity", "INFO"), approved_by=approved_by, override_type=body.get("override_type"), evidence=body.get("evidence"))
+        result = control_plane.kill_switch.change_status(
+            agent_id,
+            status,
+            source,
+            reason,
+            body.get("triggered_by", "admin"),
+            trace_id=body.get("trace_id"),
+            severity=body.get("severity", "INFO"),
+            approved_by=approved_by,
+            override_type=body.get("override_type"),
+            evidence=body.get("evidence"),
+            change_ticket=body.get("change_ticket"),
+            second_approved_by=body.get("second_approved_by"),
+        )
         return {**result, "status": result["new_status"]}
     except AgentNotFoundError as exc: raise HTTPException(404, str(exc))
     except ValueError as exc: raise HTTPException(400, str(exc))
@@ -509,7 +703,7 @@ async def demo_loan(body: dict): return await _invoke_control_plane("loan_assess
 
 @router.post("/demo/run-collections")
 async def demo_collections(body: dict):
-    """Multi-mode Collections invoke — delegates through control plane governance.
+    """Multi-mode Collections invoke - delegates through control plane governance.
 
     Accepted modes: pre_call | post_call | full_lifecycle | voice_greet | voice_analyze
     The frontend must send only account_id + transcript text (or captured_transcript_id).
@@ -528,7 +722,17 @@ async def demo_collections(body: dict):
 @router.get("/demo/collections/accounts")
 async def collections_accounts():
     from banking_agents.collections_domain import list_accounts
-    return {"accounts": list_accounts()}
+    principal_id = control_plane.authorization.principal_id_for_agent("collections_workflow_agent")
+    control_plane.authorization.enforce(AuthorizationRequest(
+        agent_id="collections_workflow_agent",
+        principal_id=principal_id,
+        invocation_id=str(uuid.uuid4()),
+        action="read",
+        resource_type="data",
+        resource_id="collections_accounts",
+        context={"lifecycle_status": control_plane.registry.get_contract("collections_workflow_agent").status.value, "approval_state": "not_required"},
+    ))
+    return {"accounts": list_accounts(authorize=False)}
 
 
 @router.get("/collections/transcripts")
@@ -670,7 +874,7 @@ async def collections_voice_start(body: dict):
 
 @router.post("/collections/voice/turn")
 async def collections_voice_turn(body: dict):
-    """Process one voice turn: audio_b64 → STT → LLM → TTS + intelligence.
+    """Process one voice turn: audio_b64 -> STT -> LLM -> TTS + intelligence.
 
     Requires:
       { account_id, audio_b64, conversation: [{role, content}] }
@@ -680,25 +884,19 @@ async def collections_voice_turn(body: dict):
     """
     account_id = body.get("account_id", "ACC-DEMO-01")
     audio_b64 = body.get("audio_b64", "")
-    conversation = body.get("conversation", [])
 
     if not audio_b64:
-        raise HTTPException(422, "audio_b64 required — capture via browser MediaRecorder")
+        raise HTTPException(422, "audio_b64 required via browser MediaRecorder")
 
-    try:
-        from banking_agents.external_plugins.collections_working_demo.vendor_src.voice_pipeline import (
-            process_voice_turn,
-        )
-        from banking_agents.collections_domain.repository import ensure_seeded, load_account
-        voice_status = _require_live_voice_ready()
-        ensure_seeded()
-        acc = load_account(account_id)
-        result = await process_voice_turn(acc, audio_b64, conversation)
-        return {"account_id": account_id, "voice_status": voice_status, **result}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(500, str(exc))
+    voice_status = _require_live_voice_ready()
+    payload = {"mode": "voice_turn", **body, "account_id": account_id}
+    result = await _invoke_control_plane(
+        "collections_workflow_agent",
+        payload,
+        trace_name="Collections Live Voice Turn",
+        request_source="live_voice_endpoint",
+    )
+    return {"voice_status": voice_status, **result}
 
 
 @router.post("/collections/voice/finalize")

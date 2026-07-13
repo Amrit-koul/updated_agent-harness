@@ -3,6 +3,9 @@ name: Sample External REST Agent
 owner: Integration Engineering
 business_function: External Integration
 agent_type: external
+risk_tier: medium
+contract_version: 1.0.0
+runtime_type: external
 execution_mode: decoupled
 adapter_type: rest_api
 endpoint: http://127.0.0.1:9001/invoke
@@ -18,17 +21,23 @@ output_schema:
     result: {type: object}
 state_schema: {type: object}
 memory_schema: {type: object}
+memory_contracts: [run]
 skills: [external_event_processing]
 tools: [external_rest_endpoint]
 prompts: []
+evaluators: []
+hooks: [invoke_lifecycle, invoke_completed, on_trace_emit]
 model_preferences: {}
 policy_permissions:
   allowed_tools: [external_rest_endpoint, invoke]
   allowed_actions: [invoke]
   allowed_data_scopes: [external_events]
+  denied_actions: []
   requires_human_approval_for: []
+  mcp_servers: []
+  mcp_tools: []
 guardrails: [prompt_injection, pii_leakage, business_scope]
-observability_hooks: {heartbeat: true, execution_trace: true, policy_decision: true}
+observability_hooks: {heartbeat: true, execution_trace: true, policy_decision: true, trace_enabled: true, audit_enabled: true, usage_enabled: true, heartbeat_required: true, external_event_ingestion_enabled: false, event_schema_version: "1.0"}
 metadata:
   timeout_seconds: 10
   auth_env_var: SAMPLE_EXTERNAL_AGENT_API_KEY

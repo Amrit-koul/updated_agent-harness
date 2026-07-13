@@ -14,6 +14,7 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 _METER: "UsageMeter | None" = None
 _CONTEXT = ContextVar("agent_harness_usage_context", default={})
+_BUDGET_MANAGER = None
 
 
 def configure_usage_meter(meter: "UsageMeter") -> None:
@@ -23,6 +24,19 @@ def configure_usage_meter(meter: "UsageMeter") -> None:
 
 def get_usage_meter() -> "UsageMeter | None":
     return _METER
+
+
+def configure_budget_manager(manager) -> None:
+    global _BUDGET_MANAGER
+    _BUDGET_MANAGER = manager
+
+
+def get_budget_manager():
+    return _BUDGET_MANAGER
+
+
+def current_usage_context() -> dict:
+    return dict(_CONTEXT.get() or {})
 
 
 @contextmanager
@@ -72,7 +86,7 @@ class UsageMeter:
 
     def record_llm_response(self, response: Any, *, provider: str, model: str, prompt: str, completion: str,
                             latency_ms: int, status="success", retry_count=0, fallback_used=False,
-                            fallback_from_model=None, fallback_to_model=None, metadata=None) -> dict:
+                            fallback_from_model=None, fallback_to_model=None, metadata=None, budget_reservation_id=None) -> dict:
         usage = self._field(response, "usage")
         prompt_tokens = self._field(usage, "prompt_tokens") if usage is not None else None
         completion_tokens = self._field(usage, "completion_tokens") if usage is not None else None
@@ -91,6 +105,7 @@ class UsageMeter:
             "latency_ms": latency_ms, "retry_count": retry_count, "fallback_used": fallback_used,
             "fallback_from_model": fallback_from_model, "fallback_to_model": fallback_to_model,
             "status": status, "metadata": metadata or {},
+            "budget_reservation_id": budget_reservation_id,
         })
 
     def record_usage(self, event: dict) -> dict:
@@ -114,6 +129,10 @@ class UsageMeter:
             "status": event.get("status", "success"), "created_at": event.get("created_at") or datetime.now(timezone.utc).isoformat(),
             "metadata": event.get("metadata", {}),
         }
+        reservation_id = event.get("budget_reservation_id") or event.get("reservation_id")
+        if reservation_id and get_budget_manager():
+            get_budget_manager().reconcile_reservation(reservation_id, result)
+            result["budget_reservation_id"] = reservation_id
         try:
             self.store.execute("""INSERT INTO usage_events(usage_id,trace_id,run_id,agent_id,agent_name,business_function,provider,model,prompt_tokens,completion_tokens,total_tokens,estimated_input_cost,estimated_output_cost,estimated_total_cost,currency,pricing_source,usage_source,estimated_method,latency_ms,retry_count,fallback_used,fallback_from_model,fallback_to_model,status,created_at,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 result["usage_id"], result["trace_id"], result["run_id"], result["agent_id"], result["agent_name"], result["business_function"], result["provider"], result["model"], result["prompt_tokens"], result["completion_tokens"], result["total_tokens"], result["estimated_input_cost"], result["estimated_output_cost"], result["estimated_total_cost"], result["currency"], result["pricing_source"], result["usage_source"], result["estimated_method"], result["latency_ms"], result["retry_count"], int(result["fallback_used"]), result["fallback_from_model"], result["fallback_to_model"], result["status"], result["created_at"], json.dumps(result["metadata"], default=str)))
@@ -150,4 +169,5 @@ class UsageMeter:
         for row in rows:
             source = row.get("usage_source") or "unknown"
             source_breakdown[source] = source_breakdown.get(source, 0) + 1
-        return {"total_runs": len({row.get("trace_id") or row["usage_id"] for row in rows}), "total_tokens": sum(row.get("total_tokens") or 0 for row in rows), "estimated_total_cost": sum(row.get("estimated_total_cost") or 0 for row in rows), "currency": "USD", "cost_label": "estimated", "cost_by_agent": grouped("agent_id", "estimated_total_cost"), "tokens_by_agent": grouped("agent_id", "total_tokens"), "cost_by_model": grouped("model", "estimated_total_cost"), "tokens_by_model": grouped("model", "total_tokens"), "daily_totals": self.store.query("SELECT substr(created_at,1,10) AS date, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(estimated_total_cost),0) AS estimated_total_cost FROM usage_events GROUP BY substr(created_at,1,10) ORDER BY date DESC"), "average_latency_by_agent": {k: round(sum(v) / len(v), 2) for k, v in latency.items()}, "fallback_count": sum(1 for row in rows if row.get("fallback_used")), "usage_source_breakdown": source_breakdown, "last_updated": datetime.now(timezone.utc).isoformat()}
+        budgets = get_budget_manager().get_budget_status() if get_budget_manager() else {"definitions": [], "periods": [], "events": []}
+        return {"total_runs": len({row.get("trace_id") or row["usage_id"] for row in rows}), "total_tokens": sum(row.get("total_tokens") or 0 for row in rows), "estimated_total_cost": sum(row.get("estimated_total_cost") or 0 for row in rows), "currency": "USD", "cost_label": "estimated", "cost_by_agent": grouped("agent_id", "estimated_total_cost"), "tokens_by_agent": grouped("agent_id", "total_tokens"), "cost_by_model": grouped("model", "estimated_total_cost"), "tokens_by_model": grouped("model", "total_tokens"), "daily_totals": self.store.query("SELECT substr(created_at,1,10) AS date, COALESCE(SUM(total_tokens),0) AS total_tokens, COALESCE(SUM(estimated_total_cost),0) AS estimated_total_cost FROM usage_events GROUP BY substr(created_at,1,10) ORDER BY date DESC"), "average_latency_by_agent": {k: round(sum(v) / len(v), 2) for k, v in latency.items()}, "fallback_count": sum(1 for row in rows if row.get("fallback_used")), "usage_source_breakdown": source_breakdown, "budgets": budgets, "last_updated": datetime.now(timezone.utc).isoformat()}

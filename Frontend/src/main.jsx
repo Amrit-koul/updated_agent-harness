@@ -16,6 +16,9 @@ import AgentContract from './pages/control/AgentContract';
 import UsageCost from './pages/control/UsageCost';
 import AgenticPrimitives from './pages/control/AgenticPrimitives';
 import RagQuality from './pages/control/RagQuality';
+import SecurityRbac from './pages/control/SecurityRbac';
+import McpRegistry from './pages/control/McpRegistry';
+import { HAS_CONTROL_PLANE_ADMIN_SECRET } from './services/controlPlaneApi';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -33,6 +36,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="control/usage-cost" element={<UsageCost />} />
           <Route path="control/primitives" element={<AgenticPrimitives />} />
           <Route path="control/rag-quality" element={<RagQuality />} />
+          <Route path="control/run-console" element={<Navigate to="/control/agents" replace />} />
+          <Route path="control/security-rbac" element={HAS_CONTROL_PLANE_ADMIN_SECRET ? <SecurityRbac /> : <Navigate to="/control/agents" replace />} />
+          <Route path="control/mcp-registry" element={<McpRegistry />} />
           <Route path="dashboard" element={<Navigate to="/control/tower" replace />} />
         </Route>
         <Route path="/chat" element={<ChatPage />} />

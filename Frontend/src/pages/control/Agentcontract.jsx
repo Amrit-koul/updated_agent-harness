@@ -115,8 +115,10 @@ function ContractViewer({ agentId }) {
     return <LoadingState loading={loading} error={error} empty={!data}>No contract data returned.</LoadingState>;
   }
 
-  const { contract, source_file, _demo } = data;
-  const { identity, adapter, schemas, capabilities, permissions, guardrails, observability, lifecycle, metadata } = contract;
+  const contract = data.effective_resolved_contract || data.contract;
+  const { source_file, _demo, original_contract_version, validation_result, unresolved_references, active_runtime, model_deployment, latest_evidence } = data;
+  const { identity, runtime, schemas, capabilities, model_policy, permissions, budget_policy, observability, lifecycle, metadata } = contract;
+  const guardrails = contract.guardrails || metadata?.guardrails || [];
 
   return (
     <div className="cc-contract-viewer">
@@ -133,12 +135,13 @@ function ContractViewer({ agentId }) {
       <SectionCard title="A · Identity">
         <div className="cc-kv-grid">
           <FieldRow label="Agent ID"          value={identity.agent_id} mono />
-          <FieldRow label="Name"              value={identity.name} />
-          <FieldRow label="Version"           value={identity.version} />
+          <FieldRow label="Name"              value={identity.display_name || identity.name} />
+          <FieldRow label="Contract version"  value={identity.contract_version} />
+          <FieldRow label="Original version"  value={original_contract_version} />
           <FieldRow label="Owner"             value={identity.owner} />
           <FieldRow label="Business function" value={identity.business_function} />
+          <FieldRow label="Risk tier"         value={identity.risk_tier} />
           <FieldRow label="Agent type"        value={identity.agent_type} />
-          <FieldRow label="Execution mode"    value={identity.execution_mode} />
         </div>
         {identity.description && (
           <p className="cc-muted" style={{ marginTop: '0.75rem' }}>{identity.description}</p>
@@ -148,9 +151,12 @@ function ContractViewer({ agentId }) {
       {/* B. Adapter boundary */}
       <SectionCard title="B · Adapter Boundary">
         <div className="cc-kv-grid">
-          <FieldRow label="Adapter type" value={adapter.adapter_type} mono />
-          {adapter.entrypoint && <FieldRow label="Entrypoint" value={adapter.entrypoint} mono />}
-          {adapter.endpoint   && <FieldRow label="Endpoint"   value={adapter.endpoint}   mono />}
+          <FieldRow label="Runtime type" value={runtime.runtime_type} mono />
+          <FieldRow label="Execution mode" value={runtime.execution_mode} mono />
+          <FieldRow label="Adapter type" value={runtime.adapter_type} mono />
+          <FieldRow label="Timeout seconds" value={runtime.timeout_seconds} />
+          {runtime.entrypoint && <FieldRow label="Entrypoint" value={runtime.entrypoint} mono />}
+          {runtime.endpoint   && <FieldRow label="Endpoint"   value={runtime.endpoint}   mono />}
         </div>
         <p className="cc-muted" style={{ marginTop: '0.75rem' }}>
           The adapter is the only boundary through which the implementation is invoked.
@@ -175,20 +181,34 @@ function ContractViewer({ agentId }) {
         <div className="cc-kv-grid">
           <div className="cc-kv-row"><span className="cc-kv-label">Skills</span><TagList items={capabilities.skills} /></div>
           <div className="cc-kv-row"><span className="cc-kv-label">Tools</span><TagList items={capabilities.tools} /></div>
+          <div className="cc-kv-row"><span className="cc-kv-label">Memory contracts</span><TagList items={capabilities.memory_contracts} /></div>
           <div className="cc-kv-row"><span className="cc-kv-label">Prompts</span><TagList items={capabilities.prompts} /></div>
+          <div className="cc-kv-row"><span className="cc-kv-label">Evaluators</span><TagList items={capabilities.evaluators} /></div>
+          <div className="cc-kv-row"><span className="cc-kv-label">Hooks</span><TagList items={capabilities.hooks} /></div>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="E · Model Policy">
+        <div className="cc-kv-grid">
+          <FieldRow label="Provider" value={model_policy.provider} mono />
+          <FieldRow label="Deployment" value={model_deployment || model_policy.deployment} mono />
+          <FieldRow label="Temperature" value={model_policy.temperature} />
+          <FieldRow label="Max output tokens" value={model_policy.max_output_tokens} />
+          <FieldRow label="Supports tools" value={model_policy.supports_tools ? 'yes' : 'no'} />
+          <FieldRow label="Structured output" value={model_policy.supports_structured_output ? 'yes' : 'no'} />
         </div>
       </SectionCard>
 
       {/* E. Runtime permissions */}
-      <SectionCard title="E · Runtime Permissions">
+      <SectionCard title="F · Runtime Permissions">
         <div className="cc-kv-grid">
           <div className="cc-kv-row">
             <span className="cc-kv-label">Allowed tools</span>
-            <TagList items={permissions.policy_permissions?.allowed_tools} />
+            <TagList items={permissions.allowed_tools} />
           </div>
           <div className="cc-kv-row">
             <span className="cc-kv-label">Allowed actions</span>
-            <TagList items={permissions.policy_permissions?.allowed_actions} />
+            <TagList items={permissions.allowed_actions} />
           </div>
           <div className="cc-kv-row">
             <span className="cc-kv-label">Data scopes</span>
@@ -196,13 +216,21 @@ function ContractViewer({ agentId }) {
           </div>
           <div className="cc-kv-row">
             <span className="cc-kv-label">Requires human approval for</span>
-            <TagList items={permissions.policy_permissions?.requires_human_approval_for} empty="None" />
+            <TagList items={permissions.human_approval_required_for} empty="None" />
+          </div>
+          <div className="cc-kv-row">
+            <span className="cc-kv-label">Denied actions</span>
+            <TagList items={permissions.denied_actions} empty="None" />
           </div>
         </div>
       </SectionCard>
 
       {/* F. Guardrail policy */}
-      <SectionCard title="F · Guardrail Policy">
+      <SectionCard title="G · Budget Policy">
+        <JsonBlock value={budget_policy || {}} />
+      </SectionCard>
+
+      <SectionCard title="H · Guardrail Policy">
         <TagList items={guardrails} empty="No guardrails declared" />
         <p className="cc-muted" style={{ marginTop: '0.75rem' }}>
           Guardrails are evaluated by the harness before and after invocation.
@@ -211,7 +239,7 @@ function ContractViewer({ agentId }) {
       </SectionCard>
 
       {/* G. Observability hooks */}
-      <SectionCard title="G · Observability Hooks">
+      <SectionCard title="I · Observability Requirements">
         {observability.hooks && Object.keys(observability.hooks).length > 0 ? (
           <div className="cc-tag-list">
             {Object.entries(observability.hooks).map(([hook, enabled]) => (
@@ -226,13 +254,13 @@ function ContractViewer({ agentId }) {
       </SectionCard>
 
       {/* H. Lifecycle controls */}
-      <SectionCard title="H · Lifecycle Controls">
+      <SectionCard title="J · Lifecycle Controls">
         <div className="cc-kv-grid">
           <div className="cc-kv-row">
             <span className="cc-kv-label">Current status</span>
-            <Pill value={lifecycle.status} variant={lifecycle.status} />
+            <Pill value={active_runtime?.status || lifecycle.initial_status} variant={active_runtime?.status || lifecycle.initial_status} />
           </div>
-          <FieldRow label="Manifest default" value={lifecycle.default_status} />
+          <FieldRow label="Manifest default" value={lifecycle.initial_status} />
         </div>
         <p className="cc-muted" style={{ marginTop: '0.75rem' }}>
           Status transitions (active → review → quarantined → disabled) are controlled by the Kill Switch page.
@@ -240,9 +268,20 @@ function ContractViewer({ agentId }) {
         </p>
       </SectionCard>
 
+      <SectionCard title="K · Validation And Evidence">
+        <div className="cc-kv-grid">
+          <FieldRow label="Validation" value={validation_result?.valid ? 'valid' : 'invalid'} />
+          <FieldRow label="Active runtime" value={`${active_runtime?.runtime_type || runtime.runtime_type} / ${active_runtime?.adapter_type || runtime.adapter_type}`} />
+        </div>
+        <p className="cc-section-label" style={{ margin: '1rem 0 0.5rem' }}>Unresolved references</p>
+        <JsonBlock value={unresolved_references || {}} />
+        <p className="cc-section-label" style={{ margin: '1rem 0 0.5rem' }}>Latest evidence</p>
+        <JsonBlock value={latest_evidence || {}} />
+      </SectionCard>
+
       {/* I. Raw manifest (source file) */}
       <SectionCard
-        title="I · Raw Contract (Manifest Preview)"
+        title="L · Raw Contract (Manifest Preview)"
         subtitle={source_file ? `Source: ${source_file}` : 'Source file not recorded'}
       >
         <div className="cc-notice info" style={{ marginBottom: '0.75rem' }}>

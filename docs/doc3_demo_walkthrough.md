@@ -2,6 +2,65 @@
 ### Agent Harness — PPT Demo Flows (Step-by-Step)
 ---
 
+## 0. Video Story Arc - How to Record the Agent Harness Demo
+
+### One-Line Opening
+"We are showing how EY can help a bank industrialize agentic AI safely: not by building one chatbot, but by deploying an Agent Harness that governs many agents across business functions."
+
+### Recommended Recording Flow
+Use this order for the video so the business and technical story land together:
+
+| Segment | Screen to Show | Message to Say |
+|---|---|---|
+| 1. PPT opening | Slide 1 and Slide 2 | "The product is an enterprise agent control plane for banking, not a point chatbot." |
+| 2. Architecture | Slide 3, then code tree | "Agent logic is separated from governance: registry, contracts, adapters, guardrails, audit, observability." |
+| 3. Agent onboarding | `/control/agents` and contract drawer | "Every agent has an owner, business function, tools, policies, schemas, and lifecycle state." |
+| 4. Business demo | `/chat`, `/loan-assessment`, `/collections` | "The same harness runs multiple banking workflows." |
+| 5. Evidence and quality | `/control/rag-quality`, `/control/audit-logs`, `/control/observability` | "Answers and recommendations are grounded, scored, persisted, and traceable." |
+| 6. Risk controls | `/control/policies`, `/control/kill-switch`, `/control/security-rbac`, `/control/mcp` | "The bank can constrain, review, stop, and govern agents centrally." |
+| 7. A2A proof | `/.well-known/agent-card.json`, `/api/v1/a2a/agents/policy_assistant_agent/card`, `/api/v1/a2a/tasks` | "This is now interoperable: governed agents expose Agent Cards and A2A task endpoints." |
+| 8. Code proof | YAML contracts, FastAPI routes, harness modules | "The UI is backed by real contracts, routes, SQLite stores, adapters, and guardrail code." |
+| 9. Close | Roadmap slide | "EY can help the bank scale from these first agents to a governed agent factory." |
+
+### What to Show in the PPT While Recording
+The PPT should cover:
+
+- **Business why:** banks need agent productivity, but only with governance and auditability.
+- **EY offer:** strategy, harness foundation, first use cases, risk operating model, production roadmap.
+- **Architecture:** React UI, FastAPI, Agent Harness core, domain agents, vector store, LLM provider, SQLite, optional LangSmith.
+- **Control-plane features:** registry, contracts, adapters, guardrails, kill switch, observability, audit, RAG quality, usage/cost, RBAC, MCP governance.
+- **Demo use cases:** Policy Assistant, Loan Assessment, Collections Workflow.
+- **Proof:** live UI, code, config, API endpoints, database-backed audit and runtime events.
+- **Roadmap:** enterprise identity, bank data integration, SIEM, model gateway, approvals workflow, production deployment.
+
+### What to Show in Code
+Open these files briefly during the recording:
+
+- `Backend/banking_agents/config/agents/policy_assistant.yaml` - agent contract and allowed primitives.
+- `Backend/agent_harness/registry.py` - contract loading and registry behavior.
+- `Backend/agent_harness/contracts.py` - typed contract model.
+- `Backend/agent_harness/kill_switch.py` - lifecycle control.
+- `Backend/banking_agents/control_routes.py` - control plane APIs used by the dashboard.
+- `Backend/banking_agents/agents/domain/policy_rag_agent.py` - RAG answer generation path.
+- `Backend/banking_agents/evaluation/rag.py` - quality evaluation.
+- `Frontend/src/pages/control/AgentRegistry.jsx` - registry UI.
+- `Frontend/src/pages/control/RagQuality.jsx` - quality evidence UI.
+- `Backend/banking_agents/a2a_routes.py` - A2A discovery, message, task, and JSON-RPC routes.
+- `Backend/agent_harness/a2a/service.py` - maps A2A messages to governed harness invocations.
+- `Backend/banking_agents/config/agents/sample_external_a2a_agent.yaml` - vendor A2A onboarding contract.
+
+### Recording Script Skeleton
+1. "A normal AI pilot answers a question. A bank-grade AI platform must also prove, govern, trace, stop, and improve the answer."
+2. "This is where EY's Agent Harness comes in. It is the enterprise control plane around agents."
+3. "Here are the agents registered today: Policy Assistant, Loan Assessment, Collections, and external-agent patterns."
+4. "Each agent has a formal contract: owner, business function, tools, skills, prompts, schemas, policies, guardrails, and lifecycle state."
+5. "Now I will run a policy question and show that the answer is grounded in approved documents."
+6. "Next I will show the bank evidence trail: RAG quality, audit logs, observability, and optional LangSmith traces."
+7. "Finally, I will show risk controls: policy guardrails and kill switch. This is the difference between an AI demo and an operating model."
+8. "For interoperability, the same governed agents now expose A2A Agent Cards and message/task endpoints. A2A calls still go through contracts, RBAC, guardrails, audit, and lifecycle controls."
+
+---
+
 > **Setup Prerequisite:**
 > - Backend running on `http://localhost:8000`
 > - Frontend running on `http://localhost:5173`
@@ -454,6 +513,52 @@ Show the multi-layer observability chain from a single user request: local struc
   - Latency breakdown per node
 - **Screenshot:** Capture the LangSmith trace tree (nested view)
 - **Slide message:** "Identical execution, now visible in LangSmith — bridging dev observability and enterprise audit"
+
+---
+
+## Demo Flow 8: A2A Agent Interoperability
+
+### Purpose
+Show that Agent Harness now has a real A2A gateway for bank-grade interoperability, not just internal orchestration.
+
+### Step 1 — Show Gateway Agent Card
+- **Screen:** Open `http://localhost:8000/.well-known/agent-card.json`
+- **What to show:** Gateway name, EY provider, skills list, security schemes, bank controls metadata.
+- **Slide message:** "A2A discovery: governed banking agents are discoverable through a standard Agent Card."
+
+### Step 2 — Show Per-Agent Card
+- **Screen:** Open `http://localhost:8000/api/v1/a2a/agents/policy_assistant_agent/card`
+- **What to show:** `agent_id`, lifecycle status, input/output schema, guardrails, policy permissions.
+- **Slide message:** "The Agent Card is generated from the same registered Agent Contract."
+
+### Step 3 — Send A2A Message
+- **Tool:** Postman, curl, or API client
+- **Endpoint:** `POST http://localhost:8000/api/v1/a2a/message/send`
+- **Body:**
+  ```json
+  {
+    "agent_id": "policy_assistant_agent",
+    "context_id": "video-a2a-demo",
+    "message": {
+      "role": "user",
+      "parts": [
+        {"type": "text", "text": "What are the KYC requirements for opening a savings account?"}
+      ]
+    }
+  }
+  ```
+- **What to show:** `status.state: completed` or a governed error/rejection if the model key is unavailable.
+- **Slide message:** "A2A message becomes a governed control-plane invocation."
+
+### Step 4 — Show Task Persistence
+- **Screen:** Open `http://localhost:8000/api/v1/a2a/tasks`
+- **What to show:** persisted task row, task state, trace id, agent id.
+- **Slide message:** "A2A tasks are persisted for audit and operational review."
+
+### Step 5 — Show Vendor A2A Contract
+- **File:** `Backend/banking_agents/config/agents/sample_external_a2a_agent.yaml`
+- **What to show:** `adapter_type: a2a`, external endpoint, metadata `agent_card_url`, guardrails, permissions.
+- **Slide message:** "Vendor agents can be onboarded through A2A without bypassing EY/bank governance."
 
 ---
 

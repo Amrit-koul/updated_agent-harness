@@ -3,6 +3,56 @@
 
 ---
 
+## 0. Agent Harness Story - What EY Is Selling to a Bank
+
+### Executive Proposition
+EY is not selling a single chatbot or a one-off banking use case. EY is selling a governed agent operating model for the bank: a reusable technology control plane that lets the bank onboard, run, monitor, stop, audit, and continuously improve many AI agents across regulated business functions.
+
+The story to tell the bank is:
+
+> "Your bank will not win with isolated AI pilots. You will win by industrializing AI agents safely. Agent Harness is the enterprise layer that turns AI agents from experiments into controlled digital workers that can operate inside banking governance, risk, compliance, technology, and operations standards."
+
+### Business Problem for the Bank
+Banks want AI agents for policy support, loan operations, collections, service, risk, compliance, and operations. The blocker is not only model accuracy. The blocker is enterprise control:
+
+- Who approved this agent?
+- What policies and tools is it allowed to use?
+- What evidence did it use for an answer or recommendation?
+- Can the bank stop the agent instantly if it behaves incorrectly?
+- Can audit, compliance, risk, and technology teams review every decision path?
+- Can third-party or vendor agents be onboarded without giving up governance?
+- Can usage, cost, performance, and quality be tracked centrally?
+
+Agent Harness answers those questions with architecture, not slideware.
+
+### EY Consulting Offer
+EY can position this as a packaged consulting and implementation offer:
+
+1. **Agentic AI Strategy for Banking:** identify high-value agent use cases and classify them by risk, data sensitivity, and operational impact.
+2. **Agent Harness Foundation:** deploy the reusable control plane, registry, contracts, guardrails, audit, observability, lifecycle states, and cost tracking.
+3. **Banking Agent Factory:** onboard first agents such as Policy Assistant, Loan Assessment, and Collections Workflow using a repeatable contract and adapter model.
+4. **Risk and Compliance Operating Model:** define approval workflows, guardrail thresholds, review triggers, evidence rules, kill-switch responsibilities, and audit reporting.
+5. **Scale and Integration Roadmap:** integrate with bank identity, data platforms, model gateways, ticketing, SIEM, vendor tools, and production observability.
+
+### Technical Thesis
+The architecture separates the **agent logic** from the **enterprise control layer**:
+
+- Domain agents remain focused on business work: retrieve policy, assess eligibility, analyze collections calls, recommend next action.
+- Agent Harness governs the agent: contract, adapter, policy permissions, lifecycle status, guardrails, usage, audit, trace, and quality gates.
+- The control plane makes agents interchangeable: internal Python agents, LangGraph agents, REST agents, webhook agents, and vendor workflows can all be managed through the same operating model.
+
+### Bank Value Narrative
+For business stakeholders, the value is faster AI adoption with lower operational risk. For technology stakeholders, the value is a reusable, modular architecture. For risk and compliance stakeholders, the value is evidence, traceability, lifecycle control, and policy enforcement.
+
+The demo proves the story through three banking scenarios:
+
+- **Policy Assistant:** reduces policy search time while preserving evidence and citation quality.
+- **Loan Assessment:** supports consistent preliminary eligibility reasoning with policy grounding and disclaimers.
+- **Collections Workflow:** shows that even a separately-developed or vendor-style workflow can be onboarded into the same governance layer.
+- **A2A Gateway:** exposes governed agents through Agent2Agent discovery and message/task endpoints, while allowing vendor A2A agents to be onboarded behind the same control plane.
+
+---
+
 ## 1. Agent Harness Purpose
 
 The **Agent Harness** is a reusable, domain-blind control-plane framework built to govern, observe, and lifecycle-manage enterprise AI agents. It provides the infrastructure layer that sits **between** a domain-specific banking application (e.g., Policy Assistant, Loan Assessment, Collections) and the underlying LLM providers (Groq) and vector stores (ChromaDB).
@@ -224,7 +274,33 @@ Agent Contract (manifest)
 - `LangGraphAgentAdapter` calls `.invoke()` or `.ainvoke()` on the graph
 - `RestApiAgentAdapter` handles retry with `max_attempts`, auth headers, health checks
 - `ExternalWebhookAgentAdapter` extends REST with heartbeat-based staleness detection
+- `A2AAgentAdapter` invokes external Agent2Agent-compatible agents through JSON-RPC `message/send`
 - All adapters record spans via the local `Tracer` for observability
+
+### A2A Adapter and Gateway
+
+The harness now includes a production-grade A2A slice for bank interoperability:
+
+- **Inbound A2A gateway:** `Backend/banking_agents/a2a_routes.py`
+- **A2A protocol models:** `Backend/agent_harness/a2a/schemas.py`
+- **A2A gateway service:** `Backend/agent_harness/a2a/service.py`
+- **Outbound A2A adapter:** `A2AAgentAdapter` in `Backend/agent_harness/adapters.py`
+- **Sample external A2A contract:** `Backend/banking_agents/config/agents/sample_external_a2a_agent.yaml`
+- **Durable task state:** `a2a_tasks` SQLite table
+
+Demo endpoints:
+
+```text
+GET  /.well-known/agent-card.json
+GET  /api/v1/a2a
+GET  /api/v1/a2a/agents/{agent_id}/card
+POST /api/v1/a2a/message/send
+POST /api/v1/a2a/rpc
+GET  /api/v1/a2a/tasks/{task_id}
+POST /api/v1/a2a/tasks/{task_id}/cancel
+```
+
+The important architecture point: A2A is not a bypass path. Incoming A2A calls are converted into `InvocationRequest` objects and executed by the same `ControlPlaneRuntime`, so lifecycle state, RBAC, guardrails, policy decisions, audit, observability, budget, and usage controls still apply.
 
 ---
 
@@ -521,7 +597,6 @@ User Query
   → InputValidator (injection, length check)
   → Small-talk detection (regex pattern match — short-circuit, no RAG)
   → ChromaDB query (policy_docs collection, top-5)
-  → RAGGuard (distance threshold check)
   → Prompt template load (versioned from prompt_registry)
   → Groq API call (llama-3.1-8b-instant)
   → Low-confidence detection → escalate to llama-3.3-70b-versatile (fallback)

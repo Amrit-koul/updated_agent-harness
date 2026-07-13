@@ -8,7 +8,8 @@ from banking_agents.rag.base_rag import BaseRAG
 from banking_agents.guardrails.rag_guard import RAGGuard
 from banking_agents.communication.message import CustomerLoanProfile
 from agent_harness.tracing import get_tracer
-from agent_harness.usage import get_usage_meter, usage_context
+from agent_harness.model_gateway import get_model_gateway
+from agent_harness.usage import usage_context
 from banking_agents.prompts import prompt_registry
 from banking_agents.evaluation.rag import build_citations, evaluate_rag_response
 
@@ -211,13 +212,10 @@ Age at Loan Maturity:       {age_at_maturity:.1f} years
                 ),
             }
             with get_tracer().span("generate_recommendation", inputs={"prompt_character_count": len(user_message)}, metadata=metadata, run_type="llm") as span:
-                started = perf_counter()
-                response = self.client.chat.completions.create(model=self.model_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}], temperature=0.0)
-                latency_ms = int((perf_counter() - started) * 1000)
+                response = get_model_gateway().chat_completions_create(self.client, provider="groq", model=self.model_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}], temperature=0.0, budget_metadata={"operation": "loan_eligibility"})
                 span.set_output({"generated": True, "model_name": self.model_id})
             result = response.choices[0].message.content.strip()
-            meter = get_usage_meter()
-            usage = meter.record_llm_response(response, provider="groq", model=self.model_id, prompt=f"{system_prompt}\n{user_message}", completion=result, latency_ms=latency_ms, metadata={"operation": "loan_eligibility"}) if meter else None
+            usage = getattr(response, "_agent_harness_usage", None)
             if usage:
                 span.add_metadata({key: usage[key] for key in ("provider", "model", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_total_cost", "latency_ms", "fallback_used", "usage_source")})
             logger.info("[LoanEligibilityRAGAgent] <<< Response received (%d chars).", len(result))

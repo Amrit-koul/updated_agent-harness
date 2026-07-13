@@ -199,3 +199,40 @@ class ExternalWebhookAgentAdapter(RestApiAgentAdapter):
             "last_checked": now.isoformat(),
             "details": {"last_heartbeat": heartbeat.isoformat(), "age_seconds": round(age, 1), "max_age_seconds": float(max_age)},
         }
+
+
+class A2AAgentAdapter(RestApiAgentAdapter):
+    """Outbound A2A client adapter for external agents.
+
+    It lets the harness govern external A2A agents through the same contract,
+    RBAC, lifecycle, budget, audit, and observability controls as internal
+    agents. The external endpoint is expected to accept the JSON-RPC A2A
+    `message/send` method.
+    """
+
+    def invoke(self, payload, trace_id):
+        message_text = payload.get("query") or payload.get("message") or payload.get("task") or json.dumps(payload, default=str)
+        task_id = payload.get("task_id") or trace_id
+        context_id = payload.get("session_id") or payload.get("context_id") or trace_id
+        rpc_payload = {
+            "jsonrpc": "2.0",
+            "id": trace_id,
+            "method": "message/send",
+            "params": {
+                "agent_id": self.manifest.metadata.get("remote_agent_id") or self.manifest.agent_id,
+                "context_id": context_id,
+                "message": {
+                    "role": "user",
+                    "task_id": task_id,
+                    "context_id": context_id,
+                    "parts": [{"type": "text", "text": message_text}],
+                    "metadata": {"payload": payload},
+                },
+                "metadata": {"trace_id": trace_id, "source": "agent_harness_a2a_adapter"},
+            },
+        }
+        response = self._request(self.manifest.endpoint, rpc_payload)
+        if "error" in response:
+            raise AdapterResponseError(f"A2A agent returned error: {response['error']}")
+        result = response.get("result", response)
+        return {"a2a_task": result, "result": result}

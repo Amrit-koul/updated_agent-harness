@@ -1,12 +1,15 @@
 const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
 const PREFIX = '/api/v1/control';
+const HAS_CONTROL_PLANE_ADMIN_SECRET = Boolean(import.meta.env.VITE_CONTROL_PLANE_ADMIN_SECRET);
 
 async function request(path, options = {}) {
+  const adminSecret = import.meta.env.VITE_CONTROL_PLANE_ADMIN_SECRET;
   const response = await fetch(`${API_BASE}${PREFIX}${path}`, {
     ...options,
     headers: {
       Accept: 'application/json',
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(adminSecret ? { 'X-Control-Plane-Admin-Secret': adminSecret } : {}),
       ...options.headers,
     },
   });
@@ -18,6 +21,7 @@ async function request(path, options = {}) {
 }
 
 const post = (path, body = {}) => request(path, { method: 'POST', body: JSON.stringify(body) });
+const del = (path) => request(path, { method: 'DELETE' });
 
 export const controlPlaneApi = {
   listAgents: () => request('/agents'),
@@ -36,6 +40,12 @@ export const controlPlaneApi = {
   listGuardrailEvents: () => request('/guardrails/events'),
   listToolAuthorizationEvents: () => request('/tools/authorization-events'),
   authorizeToolAction: (body = {}) => post('/tools/authorize', body),
+  listMcpRegistry: () => request('/mcp/servers'),
+  getMcpServer: (id) => request(`/mcp/servers/${encodeURIComponent(id)}`),
+  refreshMcpServer: (id) => post(`/mcp/servers/${encodeURIComponent(id)}/refresh`),
+  listMcpInvocations: () => request('/mcp/invocations'),
+  invokeMcpTool: (agentId, serverId, toolName, body = {}) =>
+    post(`/agents/${encodeURIComponent(agentId)}/mcp/${encodeURIComponent(serverId)}/${encodeURIComponent(toolName)}`, body),
   listKillSwitchEvents: () => request('/kill-switch/events'),
   listDegradationEvents: () => request('/degradation/events'),
   runUnsafeSql: (body = {}) => post('/demo/run-unsafe-sql', body),
@@ -67,6 +77,7 @@ export const controlPlaneApi = {
     request(`/collections/${encodeURIComponent(accountId)}/history`),
   getUsageSummary: () => request('/usage/summary'),
   listUsageEvents: () => request('/usage/events'),
+  getUsageBudgets: () => request('/usage/budgets'),
   listSkills: () => request('/skills'),
   listTools: () => request('/tools'),
   getPrimitiveValidation: () => request('/primitives/validation'),
@@ -77,6 +88,16 @@ export const controlPlaneApi = {
   getObservabilityStatus: () => request('/observability/status'),  // ← added
   listPrompts: () => request('/prompts'),
   listEvaluators: () => request('/evaluators'),
+  listPrincipals: () => request('/security/principals'),
+  getPrincipal: (id) => request(`/security/principals/${encodeURIComponent(id)}`),
+  createPrincipal: (body = {}) => post('/security/principals', body),
+  disablePrincipal: (id, body = {}) => post(`/security/principals/${encodeURIComponent(id)}/disable`, body),
+  listRoles: () => request('/security/roles'),
+  assignRole: (principalId, body = {}) => post(`/security/principals/${encodeURIComponent(principalId)}/roles`, body),
+  revokeRole: (principalId, roleId, scopeType = 'global', scopeValue = '*') =>
+    del(`/security/principals/${encodeURIComponent(principalId)}/roles/${encodeURIComponent(roleId)}?scope_type=${encodeURIComponent(scopeType)}&scope_value=${encodeURIComponent(scopeValue)}`),
+  getEffectivePermissions: (principalId) => request(`/security/principals/${encodeURIComponent(principalId)}/effective-permissions`),
+  listAuthorizationDecisions: () => request('/security/authorization-decisions'),
 };
 
-export { API_BASE };
+export { API_BASE, HAS_CONTROL_PLANE_ADMIN_SECRET };

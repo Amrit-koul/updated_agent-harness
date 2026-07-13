@@ -3,6 +3,9 @@ name: Policy Assistant Agent
 owner: Retail Banking Policy
 business_function: Policy Assistance
 agent_type: internal
+risk_tier: medium
+contract_version: 1.0.0
+runtime_type: internal
 execution_mode: workflow
 adapter_type: python_function
 entrypoint: banking_agents.agents.control_plane_plugins.internal.policy_assistant
@@ -11,11 +14,15 @@ input_schema: {type: object, required: [query], properties: {query: {type: strin
 output_schema: {type: object, required: [answer], properties: {answer: {type: string}}}
 state_schema: {type: object, properties: {session_id: {type: string}}}
 memory_schema: {type: object, properties: {conversation: {type: array}}}
+memory_contracts: [run, agent]
 skills: [policy_retrieval, grounded_answering]
 tools: [document_search]
 prompts: [system:v1, retrieval_answer:v1, banking_guardrails:v1, pii_redaction:v1]
-model_preferences: {primary: llama-3.1-8b-instant, fallback: llama-3.3-70b-versatile}
-policy_permissions: {allowed_tools: [document_search, invoke], allowed_actions: [invoke], allowed_data_scopes: [policy_documents], requires_human_approval_for: []}
+evaluators: [rag_groundedness, rag_semantic_similarity, citation_coverage, policy_compliance]
+hooks: [invoke_lifecycle, invoke_completed, policy_blocked, on_trace_emit]
+model_preferences: {provider: groq, deployment: llama-3.1-8b-instant, allowed_fallbacks: [llama-3.3-70b-versatile], supports_tools: false, supports_structured_output: true}
+policy_permissions: {allowed_tools: [document_search, invoke], allowed_actions: [invoke], allowed_data_scopes: [policy_documents], denied_actions: [], requires_human_approval_for: [], mcp_servers: [banking_mcp], mcp_tools: [banking_mcp.get_policy_metadata]}
+budget_policy: {period: invocation, max_input_tokens: 8000, max_output_tokens: 2000, max_total_tokens: 10000, warning_threshold_pct: 80, enforcement_mode: warn, fallback_action: smaller_model, allowed_fallback_deployments: [llama-3.3-70b-versatile]}
 guardrails: [prompt_injection, pii_leakage, regulatory_advice, business_scope]
-observability_hooks: {execution_trace: true, agent_run: true, policy_decision: true}
+observability_hooks: {execution_trace: true, agent_run: true, policy_decision: true, trace_enabled: true, audit_enabled: true, usage_enabled: true, step_events_enabled: false, heartbeat_required: false, external_event_ingestion_enabled: false, event_schema_version: "1.0"}
 status: active

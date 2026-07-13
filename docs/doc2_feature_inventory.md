@@ -2,6 +2,45 @@
 ### Agent Harness — What is Real, What is Seeded, What is Demo-Only
 ---
 
+## 0. Sales Story Feature Map - What the Demo Proves
+
+### What EY Is Selling
+EY is selling a governed agent platform accelerator for banks, not a generic AI demo. The feature set proves that a bank can move from isolated experiments to a controlled agent estate where every agent has an owner, contract, permission set, lifecycle state, audit trail, quality signal, and operating dashboard.
+
+### Bank Buyer Lens
+Use this lens when explaining each feature:
+
+| Bank Stakeholder | What They Care About | Feature Evidence in This Demo |
+|---|---|---|
+| Business Head | Faster policy, lending, and collections operations | Policy Assistant, Loan Assessment, Collections Workspace |
+| CIO / CTO | Reusable architecture, integration readiness, cost control | Agent Registry, Adapter Model, Usage and Cost Tracking |
+| CRO / Compliance | Explainability, evidence, review, policy enforcement | RAG Quality, Guardrails, Audit Trail, Agent Contracts |
+| Operations | Run-state visibility and ability to intervene | Control Tower, Kill Switch, Lifecycle Status |
+| Vendor Management | Ability to govern third-party agents | REST/Webhook/GitHub/plugin adapter patterns |
+| CISO | Access control, tool authorization, data scope boundaries | Policy Permissions, MCP Governance, Security/RBAC controls |
+
+### Feature Narrative for the Video
+When recording the walkthrough, do not present the UI as "screens." Present it as a bank operating model:
+
+1. **Register the workforce:** show Agent Catalog and Agent Contracts.
+2. **Constrain the workforce:** show tools, skills, policies, guardrails, RBAC, and MCP controls.
+3. **Run business work:** show Policy Assistant, Loan Assessment, and Collections.
+4. **Prove the work:** show RAG quality, citations, audit events, traces, and usage.
+5. **Control the risk:** show kill switch, review state, degradation, and lifecycle events.
+
+### What Must Be Clear in the PPT
+The PPT should make these claims, and the demo should back each one with a real screen or code file:
+
+- Agent Harness is reusable across banking domains.
+- Agents are onboarded through formal YAML contracts, not hidden code paths.
+- Every invocation can be audited and traced.
+- Guardrails are layered: input, business policy, retrieval quality, output, and lifecycle.
+- The bank can govern internal and external agents through the same adapter boundary.
+- A2A support is implemented as a governed gateway: Agent Cards, message/task endpoints, SQLite task state, and an outbound A2A adapter.
+- The current build is a working reference implementation with clear labels for live, seeded, fallback, static, and demo-only areas.
+
+---
+
 > **Legend:**
 > - 🟢 **LIVE** — backend logic runs in real-time, data written to SQLite or ChromaDB
 > - 🟡 **SEEDED** — data was pre-ingested or pre-seeded but logic is real
@@ -720,6 +759,37 @@ GET /api/v1/control/primitives/validation
 ### Status
 🟠 **STATIC** — read from YAML config; no runtime computation  
 🟢 **LIVE cross-referencing** — agent contract links are dynamically resolved
+
+---
+
+## Feature 16: A2A Agent Interoperability Gateway
+
+### What Exists in Backend
+The harness exposes registered agents through A2A-style discovery and message/task endpoints. It also supports onboarding external A2A-compatible agents via a first-class `a2a` adapter type.
+
+### Endpoint(s) Used
+```text
+GET  /.well-known/agent-card.json
+GET  /api/v1/a2a
+GET  /api/v1/a2a/agents
+GET  /api/v1/a2a/agents/{agent_id}/card
+POST /api/v1/a2a/message/send
+POST /api/v1/a2a/rpc
+GET  /api/v1/a2a/tasks
+GET  /api/v1/a2a/tasks/{task_id}
+POST /api/v1/a2a/tasks/{task_id}/cancel
+```
+
+### Important Code Files
+- `Backend/banking_agents/a2a_routes.py`
+- `Backend/agent_harness/a2a/schemas.py`
+- `Backend/agent_harness/a2a/service.py`
+- `Backend/agent_harness/adapters.py` - `A2AAgentAdapter`
+- `Backend/banking_agents/config/agents/sample_external_a2a_agent.yaml`
+- `Backend/agent_harness/migrations/003_a2a_gateway.sql`
+
+### Status
+LIVE for discovery, task persistence, internal governed invocation path, JSON-RPC wrapper, and outbound A2A adapter. Streaming and push notifications are explicitly marked unsupported in the Agent Card until hardened.
 
 ---
 

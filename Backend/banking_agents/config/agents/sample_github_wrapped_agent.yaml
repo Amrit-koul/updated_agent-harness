@@ -3,6 +3,9 @@ name: Sample GitHub Wrapped Agent
 owner: Platform / Vendor Integration
 business_function: External Agent Integration
 agent_type: external
+risk_tier: medium
+contract_version: 1.0.0
+runtime_type: internal
 execution_mode: synchronous
 adapter_type: python_function
 entrypoint: banking_agents.external_plugins.sample_github_wrapped_agent.wrapper.invoke
@@ -22,17 +25,23 @@ output_schema:
     trace_id: {type: string}
 state_schema: {type: object}
 memory_schema: {type: object}
-skills: [repository_wrapper, vendor_response_normalization]
+memory_contracts: [run]
+skills: [repository_wrapper]
 tools: [wrapped_repository_call]
 prompts: []
+evaluators: []
+hooks: [invoke_lifecycle, invoke_completed, on_trace_emit]
 model_preferences: {}
 policy_permissions:
-  allowed_tools: [wrapped_repository_call]
+  allowed_tools: [wrapped_repository_call, invoke]
   allowed_actions: [invoke]
   allowed_data_scopes: []
+  denied_actions: []
   requires_human_approval_for: []
+  mcp_servers: []
+  mcp_tools: []
 guardrails: [pii_leakage, unsafe_sql, prompt_injection, business_scope]
-observability_hooks: {execution_trace: true, policy_decision: true, audit: true, usage_cost: true}
+observability_hooks: {execution_trace: true, policy_decision: true, audit: true, usage_cost: true, trace_enabled: true, audit_enabled: true, usage_enabled: true, heartbeat_required: false, event_schema_version: "1.0"}
 metadata:
   timeout_seconds: 30
 status: active

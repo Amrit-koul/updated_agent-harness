@@ -8,7 +8,8 @@ from banking_agents.config.settings import get_groq_client, MODEL_POLICY_RAG_DEF
 from banking_agents.rag.base_rag import BaseRAG
 from banking_agents.guardrails.rag_guard import RAGGuard
 from agent_harness.tracing import get_tracer
-from agent_harness.usage import get_usage_meter, usage_context
+from agent_harness.model_gateway import get_model_gateway
+from agent_harness.usage import usage_context
 from banking_agents.prompts import prompt_registry
 from banking_agents.evaluation.rag import build_citations, evaluate_rag_response
 
@@ -186,13 +187,10 @@ class PolicyRAGAgent:
         try:
             logger.debug("[PolicyRAGAgent.answer] Calling Groq API | Model: %s", self.model_id)
             with tracer.span("generate_policy_answer", inputs={"query_category": category, "retrieved_doc_count": len(context_parts)}, metadata=prompt_metadata, run_type="llm") as generation_span:
-                started = perf_counter()
-                response = self.client.chat.completions.create(model=self.model_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}], temperature=0.1)
-                primary_latency = int((perf_counter() - started) * 1000)
+                response = get_model_gateway().chat_completions_create(self.client, provider="groq", model=self.model_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}], temperature=0.1, budget_metadata={"operation": "policy_rag"})
                 generation_span.set_output({"generated": True, "model_name": self.model_id})
             output_text = response.choices[0].message.content.strip()
-            meter = get_usage_meter()
-            primary_usage = meter.record_llm_response(response, provider="groq", model=self.model_id, prompt=f"{system_prompt}\n{user_message}", completion=output_text, latency_ms=primary_latency, metadata={"operation": "policy_rag"}) if meter else None
+            primary_usage = getattr(response, "_agent_harness_usage", None)
             if primary_usage:
                 generation_span.add_metadata({key: primary_usage[key] for key in ("provider", "model", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_total_cost", "latency_ms", "fallback_used", "usage_source")})
             logger.debug("[PolicyRAGAgent.answer] Primary model response (preview): %s...", output_text[:200])
@@ -201,12 +199,10 @@ class PolicyRAGAgent:
             if any(marker in output_text.lower() for marker in ("not established", "does not clearly state", "conflicting policy")):
                 logger.warning("[PolicyRAGAgent.answer] Low confidence detected. Escalating to fallback: %s", self.fallback_model_id)
                 with tracer.span("generate_policy_answer", inputs={"reason": "low_confidence_fallback"}, metadata={**prompt_metadata, "model_name": self.fallback_model_id}, run_type="llm") as fallback_span:
-                    fallback_started = perf_counter()
-                    fallback_response = self.client.chat.completions.create(model=self.fallback_model_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}], temperature=0.1)
-                    fallback_latency = int((perf_counter() - fallback_started) * 1000)
+                    fallback_response = get_model_gateway().chat_completions_create(self.client, provider="groq", model=self.fallback_model_id, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}], temperature=0.1, fallback_from_model=self.model_id, budget_metadata={"operation": "policy_rag", "reason": "low_confidence"})
                     fallback_span.set_output({"generated": True, "fallback": True})
                 fallback_text = fallback_response.choices[0].message.content.strip()
-                fallback_usage = meter.record_llm_response(fallback_response, provider="groq", model=self.fallback_model_id, prompt=f"{system_prompt}\n{user_message}", completion=fallback_text, latency_ms=fallback_latency, fallback_used=True, fallback_from_model=self.model_id, fallback_to_model=self.fallback_model_id, metadata={"operation": "policy_rag", "reason": "low_confidence"}) if meter else None
+                fallback_usage = getattr(fallback_response, "_agent_harness_usage", None)
                 if fallback_usage:
                     fallback_span.add_metadata({key: fallback_usage[key] for key in ("provider", "model", "prompt_tokens", "completion_tokens", "total_tokens", "estimated_total_cost", "latency_ms", "fallback_used", "usage_source")})
                 logger.info("[PolicyRAGAgent.answer] <<< Returning fallback model response.")

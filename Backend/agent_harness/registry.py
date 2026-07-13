@@ -17,7 +17,7 @@ class AgentRegistry:
         self._events, self._lock = [], RLock()
 
     def load(self, config_dir):
-        validator = ContractValidator()
+        validator = ContractValidator.from_config_dir(config_dir)
         contracts = load_agent_contracts(config_dir)
         if not contracts: raise RuntimeError(f"No agent manifests found in {config_dir}")
         for contract in contracts:
@@ -37,7 +37,7 @@ class AgentRegistry:
                 if self.services and getattr(self.services, "store", None):
                     self.services.store.execute("INSERT OR IGNORE INTO agents(agent_id,name,status,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)", (contract.agent_id, contract.name, contract.status.value))
                     self.services.store.execute("UPDATE agents SET name=? WHERE agent_id=?", (contract.name, contract.agent_id))
-                    self.services.store.execute("INSERT OR REPLACE INTO agent_contracts(agent_id,contract_json,source_file,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)", (contract.agent_id, json.dumps(contract.to_dict()), contract.metadata.get("source_file", "")))
+                    self.services.store.execute("INSERT OR REPLACE INTO agent_contracts(agent_id,contract_json,source_file,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)", (contract.agent_id, json.dumps(contract.effective_contract()), contract.metadata.get("source_file", "")))
         return len(contracts)
 
     def list_agents(self): return [{**contract.to_dict(), "metrics": self.metrics(contract.agent_id)} for contract in self._contracts.values()]
@@ -60,6 +60,42 @@ class AgentRegistry:
         if agent_id in self._metrics:
             self._metrics[agent_id] = {"runs": 0, "failures": 0, "policy_blocks": 0, "recent": deque(maxlen=5)}
     def metrics(self, agent_id): return {**self._metrics[agent_id], "recent": list(self._metrics[agent_id]["recent"])}
+
+    def registry_contract_view(self, agent_id):
+        contract = self.get_contract(agent_id)
+        latest_evidence = {}
+        if self.services and getattr(self.services, "store", None):
+            for key, sql in {
+                "kill_switch": "SELECT * FROM kill_switch_events WHERE agent_id=? ORDER BY id DESC LIMIT 1",
+                "rag_evaluation": "SELECT * FROM rag_evaluations WHERE agent_id=? ORDER BY created_at DESC LIMIT 1",
+                "guardrail_event": "SELECT * FROM guardrail_events WHERE agent_id=? ORDER BY id DESC LIMIT 1",
+                "policy_decision": "SELECT * FROM policy_decisions WHERE agent_id=? ORDER BY id DESC LIMIT 1",
+                "usage_event": "SELECT * FROM usage_events WHERE agent_id=? ORDER BY created_at DESC LIMIT 1",
+            }.items():
+                rows = self.services.store.query(sql, (agent_id,))
+                latest_evidence[key] = rows[0] if rows else None
+        effective = contract.effective_contract()
+        return {
+            "agent_id": agent_id,
+            "effective_resolved_contract": effective,
+            "contract": effective,
+            "original_contract_version": contract.original_contract_version,
+            "validation_result": contract.validation_result,
+            "unresolved_references": contract.unresolved_references,
+            "active_runtime": {
+                "runtime_type": contract.runtime_type,
+                "execution_mode": contract.execution_mode,
+                "adapter_type": contract.adapter_type,
+                "status": contract.status.value,
+            },
+            "model_deployment": effective["model_policy"].get("deployment"),
+            "budget_policy": effective["budget_policy"],
+            "permissions": effective["permissions"],
+            "observability_requirements": effective["observability"],
+            "latest_evidence": latest_evidence,
+            "source_file": contract.metadata.get("source_file") or None,
+            "_demo": bool(contract.metadata.get("demo", False)),
+        }
 
     # Compatibility surface for existing application routes; definitions are injected by the app.
     def register_runtime_agent(self, name, definition): self._legacy[name] = {"calls": 0, "errors": 0, "total_latency_ms": 0, "last_called": None, "last_error": None, **definition}

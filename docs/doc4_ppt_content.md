@@ -4,6 +4,56 @@
 
 ---
 
+## Executive Sales Story - EY to Bank
+
+### What Exactly Are We Selling?
+We are selling **Agent Harness for Banking**: an EY-led accelerator and implementation approach that gives the bank a reusable control plane for safely deploying and operating AI agents across business functions.
+
+This is not positioned as "one chatbot." It is positioned as the foundation for a bank-wide agent factory:
+
+- Build or onboard agents faster.
+- Govern each agent through contracts, policies, tool permissions, and lifecycle states.
+- Prove every answer or recommendation with evidence, audit, trace, and quality scores.
+- Stop or degrade agents when risk thresholds are crossed.
+- Scale from first use cases to enterprise operations without rebuilding governance each time.
+
+### The Business Story
+Banks are under pressure to improve productivity in policy operations, lending, collections, service, compliance, and risk. AI agents can help, but banks cannot adopt them like consumer chatbots. A bank needs governance-by-design: every agent must be approved, constrained, monitored, explainable, auditable, and stoppable.
+
+EY's story:
+
+> "We help the bank move from AI experiments to governed AI operations. Agent Harness is the technology foundation that lets business teams adopt agents while technology, risk, and compliance stay in control."
+
+### The Technical Story
+The technical differentiation is a control plane around agents:
+
+- **Registry:** known inventory of agents and status.
+- **Contracts:** typed YAML definition of owner, business function, tools, prompts, schemas, permissions, and guardrails.
+- **Adapters:** same governance for Python, LangGraph, REST, webhook, and plugin/vendor agents.
+- **A2A Interoperability:** Agent Cards and A2A message/task APIs expose governed agents to enterprise agent ecosystems.
+- **Policy and guardrails:** checks before, during, and after invocation.
+- **Evidence:** RAG citations, quality scores, audit logs, trace events, usage and cost.
+- **Lifecycle:** active, review, quarantined, disabled, with reason and approver.
+- **Control UI:** screens for operations, risk, technology, and audit stakeholders.
+
+### Suggested Talk Track for the First 60 Seconds
+"EY is not proposing another chatbot pilot. We are proposing a governed agent foundation for the bank. The bank can start with practical use cases like policy Q&A, loan assessment support, and collections intelligence, but the real asset is the harness around them: agent contracts, adapters, guardrails, audit, RAG quality, usage tracking, and kill switch. That is what lets a regulated bank scale AI agents responsibly."
+
+### PPT Must Include
+The deck should include these content blocks:
+
+| Section | Required Content |
+|---|---|
+| Business context | Why banks need agents, why unmanaged agents are risky, why governance is the differentiator |
+| EY proposition | Strategy + harness implementation + first use cases + operating model + scale roadmap |
+| Architecture | Frontend, FastAPI, Agent Harness core, adapters, domain agents, RAG, LLM provider, SQLite, LangSmith |
+| Features | Registry, contracts, primitives, guardrails, kill switch, audit, observability, RAG quality, usage/cost, RBAC, MCP, A2A |
+| Demo | Policy Assistant, Loan Assessment, Collections, control tower, evidence trail, risk controls |
+| Code proof | YAML contracts, registry, control routes, guardrails, RAG evaluator, frontend control pages |
+| Roadmap | Bank identity, approvals, SIEM, enterprise model gateway, bank data integrations, production hardening |
+
+---
+
 > **Presenter Guide:**
 > - 🟢 = Live backend, real data
 > - 🟡 = Seeded data, real logic
@@ -231,6 +281,7 @@ status: active
 | collections_workflow_agent | **external_plugin** | python_function | Collections Ops |
 | sample_external_agent | external | rest_api | Integration (demo) |
 | sample_external_rest_agent | external | rest_api | Integration (demo) |
+| sample_external_a2a_agent | external | a2a | Agent Interoperability |
 | sample_github_wrapped_agent | external | python_function | Integration (demo) |
 | demo_vendor_rest_agent | vendor | rest_api | Vendor (demo) |
 
@@ -245,6 +296,8 @@ Any Agent Source:
   All adapters implement: invoke(payload, trace_id) → result
   All adapters enforce: timeout, tracing, error classification
 ```
+
+**A2A addition:** external Agent2Agent-compatible agents use `A2AAgentAdapter` and are registered through `adapter_type: a2a`.
 
 ### The Plugin Model — Collections as Example
 ```yaml
@@ -261,6 +314,34 @@ entrypoint: banking_agents.external_plugins.collections_working_demo.wrapper.inv
 
 ### Speaker Notes
 "The adapter boundary is the key engineering insight here. It doesn't matter whether the agent is a Python function, a LangGraph graph, or an external REST API — the harness interacts with all of them through the same interface. This means we can onboard a third-party or legacy system into our governance framework without rewriting it. The Collections agent is a perfect example — it was a standalone system, and we've wrapped it in a contract and brought it under the harness without touching its core logic."
+
+---
+
+## Slide 5A: A2A Interoperability for Bank-Grade Agent Ecosystems
+
+### Title
+**A2A Gateway: Governed Agent-to-Agent Interoperability**
+
+### Body Content
+
+Agent Harness now exposes agents through an A2A gateway:
+
+- `/.well-known/agent-card.json` for gateway discovery
+- `/api/v1/a2a/agents/{agent_id}/card` for per-agent Agent Cards
+- `/api/v1/a2a/message/send` for A2A message execution
+- `/api/v1/a2a/rpc` for JSON-RPC style A2A calls
+- `/api/v1/a2a/tasks` for persisted task review
+- `adapter_type: a2a` for external vendor agents
+
+### Why It Matters to the Bank
+
+A2A allows the bank to participate in a multi-agent ecosystem without allowing unmanaged agent calls. Every A2A call is still routed through Agent Harness controls: contract validation, lifecycle status, RBAC, policy guardrails, audit, observability, and usage tracking.
+
+### Screenshot Placeholder
+`[Screenshot: /.well-known/agent-card.json showing EY Agent Harness Banking Gateway]`
+
+### Speaker Notes
+"This is the interoperability layer. If the bank has vendor agents, partner agents, or agents built on another framework, A2A gives us a standard communication pattern. The important part is that we do not expose raw agents. We expose governed agents through the harness."
 
 ---
 

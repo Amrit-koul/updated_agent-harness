@@ -1,0 +1,51 @@
+agent_id: sample_external_a2a_agent
+name: Sample External A2A Agent
+owner: Integration Engineering
+business_function: External Agent Interoperability
+agent_type: external
+risk_tier: high
+contract_version: 1.0.0
+runtime_type: external
+execution_mode: synchronous
+adapter_type: a2a
+endpoint: http://127.0.0.1:9002/api/v1/a2a/rpc
+description: Example vendor or partner agent onboarded through the Agent2Agent protocol and governed by the Agent Harness.
+input_schema:
+  type: object
+  required: [query]
+  properties:
+    query: {type: string}
+    session_id: {type: string}
+    task_id: {type: string}
+output_schema:
+  type: object
+  required: [a2a_task]
+  properties:
+    a2a_task: {type: object}
+    result: {type: object}
+state_schema: {type: object, properties: {task_id: {type: string}, context_id: {type: string}}}
+memory_schema: {type: object, properties: {a2a_context: {type: object}}}
+memory_contracts: [run]
+skills: [external_event_processing]
+tools: [external_a2a_endpoint]
+prompts: []
+evaluators: []
+hooks: [invoke_lifecycle, invoke_completed, on_error, on_trace_emit]
+model_preferences: {provider: external, deployment: vendor-a2a-agent, supports_tools: false, supports_structured_output: true}
+policy_permissions:
+  allowed_tools: [external_a2a_endpoint]
+  allowed_actions: [invoke]
+  allowed_data_scopes: [external_agent_requests]
+  denied_actions: []
+  requires_human_approval_for: []
+budget_policy: {period: invocation, max_input_tokens: 4000, max_output_tokens: 2000, max_total_tokens: 6000, warning_threshold_pct: 80, enforcement_mode: monitor}
+guardrails: [prompt_injection, pii_leakage, business_scope]
+observability_hooks: {execution_trace: true, agent_run: true, policy_decision: true, trace_enabled: true, audit_enabled: true, usage_enabled: true, external_event_ingestion_enabled: true, event_schema_version: "1.0"}
+metadata:
+  remote_agent_id: vendor_a2a_agent
+  agent_card_url: http://127.0.0.1:9002/.well-known/agent-card.json
+  timeout_seconds: 30
+  production_notes:
+    identity: Replace demo endpoint with bank-approved service identity, mTLS, OAuth2/OIDC, and credential vault references.
+    governance: Keep vendor agent behind contract, RBAC, lifecycle, audit, and kill-switch controls.
+status: active

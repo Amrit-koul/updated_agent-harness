@@ -7,6 +7,7 @@ from pathlib import Path
 from .db.database import Base, SessionLocal, engine
 from .db.models import AIProfile, Claim, Customer, Interaction, LoanAccount, PTPHistory
 from .services.intelligence.account_context import enrich_account_data
+from agent_harness.authorization import authorize_current_resource
 
 
 SEED_PATH = Path(__file__).parent / "data" / "accounts.json"
@@ -35,7 +36,9 @@ def ensure_seeded():
         db.close()
 
 
-def load_account(account_id):
+def load_account(account_id, authorize=True):
+    if authorize:
+        authorize_current_resource("data", "collections_accounts", "read", {"account_id": account_id, "data_scope": "collections_accounts"})
     ensure_seeded()
     db = SessionLocal()
     try:
@@ -59,8 +62,10 @@ def load_account(account_id):
         db.close()
 
 
-def list_accounts():
+def list_accounts(authorize=True):
     """Return the persisted Collections portfolio without running intelligence."""
+    if authorize:
+        authorize_current_resource("data", "collections_accounts", "read", {"data_scope": "collections_accounts"})
     ensure_seeded()
     db = SessionLocal()
     try:

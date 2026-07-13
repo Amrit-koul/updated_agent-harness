@@ -1,0 +1,61 @@
+agent_id: sample_external_webhook_agent
+name: Sample External Webhook Agent
+owner: Integration Engineering
+business_function: External Event Integration
+agent_type: external
+risk_tier: medium
+contract_version: 1.0.0
+runtime_type: external
+execution_mode: decoupled
+adapter_type: external_webhook
+endpoint: http://127.0.0.1:9001/webhook
+description: Registration example for an independently hosted webhook-style agent with heartbeat health.
+input_schema:
+  type: object
+  required: [event]
+  properties:
+    event: {type: object}
+output_schema:
+  type: object
+  properties:
+    accepted: {type: boolean}
+    delivery: {type: object}
+    trace_id: {type: string}
+state_schema: {type: object}
+memory_schema: {type: object}
+memory_contracts: [run]
+skills: [external_event_processing]
+tools: [external_webhook_endpoint]
+prompts: []
+evaluators: []
+hooks: [invoke_lifecycle, invoke_completed, on_trace_emit]
+model_preferences: {}
+policy_permissions:
+  allowed_tools: [external_webhook_endpoint]
+  allowed_actions: [invoke]
+  allowed_data_scopes: [external_events]
+  denied_actions: []
+  requires_human_approval_for: []
+  mcp_servers: []
+  mcp_tools: []
+guardrails: [prompt_injection, pii_leakage, business_scope]
+observability_hooks:
+  heartbeat: true
+  trace_enabled: true
+  audit_enabled: true
+  usage_enabled: true
+  heartbeat_required: true
+  external_event_ingestion_enabled: true
+  event_schema_version: "1.0"
+metadata:
+  demo: true
+  demo_notes: >
+    Webhook contract is registered to exercise the external_webhook adapter and heartbeat health path.
+    Start a compatible receiver on 127.0.0.1:9001/webhook before invoking it.
+  timeout_seconds: 5
+  retry:
+    max_attempts: 1
+  auth_env_var: ""
+  health_check:
+    max_heartbeat_age_seconds: 300
+status: active

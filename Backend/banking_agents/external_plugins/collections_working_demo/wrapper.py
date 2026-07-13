@@ -59,7 +59,7 @@ def invoke(payload: Dict[str, Any], trace_id: str = "") -> Dict[str, Any]:
     Args:
         payload: {
             mode:                   "pre_call" | "post_call" | "full_lifecycle" |
-                                    "voice_greet" | "voice_analyze"
+                                    "voice_greet" | "voice_analyze" | "voice_turn"
             account_id:             str (required for all modes)
             transcript:             str (required for post_call / voice_analyze)
             captured_transcript_id: str (optional — load from sample library)
@@ -90,6 +90,8 @@ def invoke(payload: Dict[str, Any], trace_id: str = "") -> Dict[str, Any]:
             return _voice_greet(payload, account_id, trace_id)
         elif mode == "voice_analyze":
             return _voice_analyze(payload, account_id, trace_id)
+        elif mode == "voice_turn":
+            return _voice_turn(payload, account_id, trace_id)
         else:
             return {
                 "mode": mode,
@@ -330,6 +332,36 @@ def _voice_analyze(payload: Dict[str, Any], account_id: str, trace_id: str) -> D
         "mode": "voice_analyze",
         "account_id": account_id,
         "intelligence": extraction,
+        "workflow_status": "completed",
+        "trace_id": trace_id,
+        "source": "collections_working_demo.wrapper",
+    }
+
+
+def _voice_turn(payload: Dict[str, Any], account_id: str, trace_id: str) -> Dict[str, Any]:
+    """Process one governed live voice turn via the migrated voice backend."""
+    from banking_agents.external_plugins.collections_working_demo.vendor_src.voice_pipeline import (
+        process_voice_turn,
+    )
+
+    audio_b64 = payload.get("audio_b64", "")
+    conversation = payload.get("conversation", [])
+    if not audio_b64:
+        return {
+            "mode": "voice_turn",
+            "workflow_status": "error",
+            "error": "audio_b64 required",
+            "trace_id": trace_id,
+            "source": "collections_working_demo.wrapper",
+        }
+
+    ensure_seeded()
+    account_data = load_account(account_id)
+    result = asyncio.run(process_voice_turn(account_data, audio_b64, conversation))
+    return {
+        "mode": "voice_turn",
+        "account_id": account_id,
+        "turn": result,
         "workflow_status": "completed",
         "trace_id": trace_id,
         "source": "collections_working_demo.wrapper",
